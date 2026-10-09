@@ -1,13 +1,19 @@
 import React from 'react';
-import { AttendanceProvider } from './context/AttendanceContext';
+import { AttendanceProvider, useAttendance } from './context/AttendanceContext';
 import { useAppRouter } from './utils/router';
-import { PortalGatewayPage } from './pages/PortalGatewayPage';
+import { LoginPage } from './pages/LoginPage';
 import { StudentPage } from './pages/StudentPage';
 import { FacultyPage } from './pages/FacultyPage';
 import { AdminPage } from './pages/AdminPage';
 
 const AppContent: React.FC = () => {
   const { currentRoute, navigateTo } = useAppRouter();
+  const { isAuthenticated, currentRole } = useAttendance();
+
+  // If not authenticated or on login route, show login page
+  if (!isAuthenticated || currentRoute === 'LOGIN') {
+    return <LoginPage onNavigate={navigateTo} />;
+  }
 
   switch (currentRoute) {
     case 'STUDENT':
@@ -18,7 +24,10 @@ const AppContent: React.FC = () => {
       return <AdminPage onNavigate={navigateTo} />;
     case 'GATEWAY':
     default:
-      return <PortalGatewayPage onNavigate={navigateTo} />;
+      if (currentRole === 'STUDENT') return <StudentPage onNavigate={navigateTo} />;
+      if (currentRole === 'FACULTY') return <FacultyPage onNavigate={navigateTo} />;
+      if (currentRole === 'ADMIN') return <AdminPage onNavigate={navigateTo} />;
+      return <LoginPage onNavigate={navigateTo} />;
   }
 };
 

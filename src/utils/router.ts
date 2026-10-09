@@ -1,23 +1,27 @@
 import { useState, useEffect, useCallback } from 'react';
 
-export type AppRoute = 'GATEWAY' | 'STUDENT' | 'FACULTY' | 'ADMIN';
+export type AppRoute = 'LOGIN' | 'STUDENT' | 'FACULTY' | 'ADMIN' | 'GATEWAY';
 
 export function parseCurrentRoute(): AppRoute {
   const hash = (window.location.hash || '').toLowerCase();
+  if (hash.startsWith('#/login') || hash === '#login') return 'LOGIN';
   if (hash.startsWith('#/student') || hash === '#student') return 'STUDENT';
   if (hash.startsWith('#/faculty') || hash === '#faculty') return 'FACULTY';
   if (hash.startsWith('#/admin') || hash === '#admin') return 'ADMIN';
 
   const path = (window.location.pathname || '').toLowerCase();
+  if (path.endsWith('/login')) return 'LOGIN';
   if (path.endsWith('/student')) return 'STUDENT';
   if (path.endsWith('/faculty')) return 'FACULTY';
   if (path.endsWith('/admin')) return 'ADMIN';
 
-  return 'GATEWAY';
+  return 'LOGIN';
 }
 
 export function routeToHash(route: AppRoute): string {
   switch (route) {
+    case 'LOGIN':
+      return '#/login';
     case 'STUDENT':
       return '#/student';
     case 'FACULTY':
@@ -25,7 +29,7 @@ export function routeToHash(route: AppRoute): string {
     case 'ADMIN':
       return '#/admin';
     default:
-      return '#/';
+      return '#/login';
   }
 }
 
@@ -73,8 +77,11 @@ function updateDocTitle(route: AppRoute) {
     case 'ADMIN':
       document.title = 'Administrative Control | AttendPulse';
       break;
+    case 'LOGIN':
+      document.title = 'Institutional Portal Login | AttendPulse';
+      break;
     default:
-      document.title = 'AttendPulse — Multi-Role College Attendance Gateway';
+      document.title = 'AttendPulse — Multi-Role College Attendance System';
       break;
   }
 }

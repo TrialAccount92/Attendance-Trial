@@ -44,6 +44,9 @@ interface AttendanceContextType {
   currentStudent: Student | null;
   currentFaculty: Faculty | null;
   switchUser: (role: UserRole, userId?: string) => void;
+  isAuthenticated: boolean;
+  login: (role: UserRole, userId?: string) => void;
+  logout: () => void;
 
   // Collections
   users: User[];
@@ -344,9 +347,19 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   );
   const [minAttendanceThreshold, setMinAttendanceThreshold] = useState<number>(0.75);
 
-  // Active persona
-  const [currentRole, setCurrentRole] = useState<UserRole>('STUDENT');
-  const [currentUserId, setCurrentUserId] = useState<string>('usr-stu-1');
+  // Active persona & authentication
+  const [currentRole, setCurrentRole] = useState<UserRole>(() => {
+    const saved = localStorage.getItem('attendpulse_v3_role');
+    if (saved === 'STUDENT' || saved === 'FACULTY' || saved === 'ADMIN') return saved;
+    return 'STUDENT';
+  });
+  const [currentUserId, setCurrentUserId] = useState<string>(() => {
+    return localStorage.getItem('attendpulse_v3_user_id') || 'usr-stu-1';
+  });
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
+    const saved = localStorage.getItem('attendpulse_v3_auth');
+    return saved !== null ? saved === 'true' : false;
+  });
 
   // Active session tracking
   const activeSession = sessions.find((s) => s.status === 'ACTIVE') || null;
@@ -409,16 +422,32 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
   const currentStudent = students.find((s) => s.user_id === currentUser.id) || null;
   const currentFaculty = facultyList.find((f) => f.user_id === currentUser.id) || null;
 
-  const switchUser = (role: UserRole, userId?: string) => {
+  const switchUser = useCallback((role: UserRole, userId?: string) => {
     setCurrentRole(role);
+    localStorage.setItem('attendpulse_v3_role', role);
     if (userId) {
       setCurrentUserId(userId);
+      localStorage.setItem('attendpulse_v3_user_id', userId);
     } else {
-      if (role === 'STUDENT') setCurrentUserId('usr-stu-1'); // Aarav Patel
-      else if (role === 'FACULTY') setCurrentUserId('usr-fac-1'); // Prof. Sharma
-      else setCurrentUserId('usr-admin'); // Admin
+      let defaultId = 'usr-stu-1';
+      if (role === 'STUDENT') defaultId = 'usr-stu-1';
+      else if (role === 'FACULTY') defaultId = 'usr-fac-1';
+      else defaultId = 'usr-admin';
+      setCurrentUserId(defaultId);
+      localStorage.setItem('attendpulse_v3_user_id', defaultId);
     }
-  };
+  }, []);
+
+  const login = useCallback((role: UserRole, userId?: string) => {
+    switchUser(role, userId);
+    setIsAuthenticated(true);
+    localStorage.setItem('attendpulse_v3_auth', 'true');
+  }, [switchUser]);
+
+  const logout = useCallback(() => {
+    setIsAuthenticated(false);
+    localStorage.setItem('attendpulse_v3_auth', 'false');
+  }, []);
 
   // Start attendance session (Faculty creates dynamic session)
   const startAttendanceSession = useCallback((classId: string, topic?: string): AttendanceSession => {
@@ -1394,6 +1423,9 @@ export const AttendanceProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         currentStudent,
         currentFaculty,
         switchUser,
+        isAuthenticated,
+        login,
+        logout,
         users,
         departments,
         subjects,

@@ -3,7 +3,7 @@ import { useAttendance } from '../../context/AttendanceContext';
 import {
   QrCode, GraduationCap, ShieldCheck, UserCheck, RotateCcw, Radio,
   Bell, HelpCircle, Calculator, X, Plus, Clock, CheckCircle2, AlertCircle,
-  TrendingUp, Users, Check,
+  TrendingUp, Users, Check, LogOut, LogIn,
 } from 'lucide-react';
 import { CorrectionRequestModal } from '../student/CorrectionRequestModal';
 import { Badge } from '../common/Badge';
@@ -23,6 +23,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenLiveSession, currentRoute,
     currentUser,
     currentStudent,
     switchUser,
+    isAuthenticated,
+    logout,
     activeSession,
     classes,
     subjects,
@@ -85,8 +87,8 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenLiveSession, currentRoute,
           <div
             className="brand-section"
             style={{ cursor: onNavigate ? 'pointer' : 'default' }}
-            onClick={() => onNavigate && onNavigate('GATEWAY')}
-            title="Click to return to Portal Selection Gateway"
+            onClick={() => onNavigate && onNavigate(isAuthenticated ? (currentRole as AppRoute) : 'LOGIN')}
+            title={isAuthenticated ? `Current: ${currentRole} Portal` : 'Click to go to Login'}
           >
             <div className="brand-icon-wrapper">
               <QrCode size={17} />
@@ -135,41 +137,80 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenLiveSession, currentRoute,
             </button>
           )}
 
-          {/* Role switcher */}
-          <div className="role-switcher-container">
-            {onNavigate && (
+          {/* Authentication & Portal Status Option (Replaces public role switcher) */}
+          {isAuthenticated ? (
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <div
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.4rem',
+                  padding: '0.3rem 0.75rem',
+                  borderRadius: 'var(--r-full)',
+                  fontSize: '0.78125rem',
+                  fontWeight: 700,
+                  background: currentRole === 'STUDENT' ? '#eff6ff' : currentRole === 'FACULTY' ? '#ecfdf5' : '#fffbeb',
+                  color: currentRole === 'STUDENT' ? '#1d4ed8' : currentRole === 'FACULTY' ? '#047857' : '#b45309',
+                  border: `1px solid ${currentRole === 'STUDENT' ? '#bfdbfe' : currentRole === 'FACULTY' ? '#a7f3d0' : '#fde68a'}`,
+                }}
+              >
+                {currentRole === 'STUDENT' && <GraduationCap size={14} />}
+                {currentRole === 'FACULTY' && <UserCheck size={14} />}
+                {currentRole === 'ADMIN' && <ShieldCheck size={14} />}
+                <span>
+                  {currentRole === 'STUDENT' ? 'Student Portal' : currentRole === 'FACULTY' ? 'Faculty Portal' : 'Admin Console'}
+                </span>
+              </div>
+
               <button
-                className="role-btn"
-                style={{ color: 'var(--gray-600)', fontWeight: 600 }}
                 onClick={() => {
                   closeDropdown();
-                  onNavigate('GATEWAY');
+                  logout();
+                  if (onNavigate) onNavigate('LOGIN');
                 }}
-                title="Return to Main Portal Selection Gateway"
-              >
-                ← Portals
-              </button>
-            )}
-            {[
-              { role: 'STUDENT' as const, label: 'Student', Icon: GraduationCap, userId: 'usr-stu-1' },
-              { role: 'FACULTY' as const, label: 'Faculty', Icon: UserCheck, userId: 'usr-fac-1' },
-              { role: 'ADMIN' as const, label: 'Admin', Icon: ShieldCheck, userId: 'usr-admin' },
-            ].map(({ role, label, Icon, userId }) => (
-              <button
-                key={role}
-                className={`role-btn${currentRole === role ? ' active' : ''}`}
-                onClick={() => {
-                  closeDropdown();
-                  switchUser(role, userId);
-                  if (onNavigate) onNavigate(role);
+                className="btn btn-ghost btn-sm"
+                style={{
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                  fontSize: '0.78125rem',
+                  fontWeight: 600,
+                  color: '#dc2626',
+                  background: '#fef2f2',
+                  border: '1px solid #fecaca',
+                  padding: '0.3rem 0.65rem',
+                  borderRadius: 'var(--r-md)',
+                  cursor: 'pointer',
                 }}
-                title={`Switch to ${label} Portal`}
+                title="Log out of institutional portal"
               >
-                <Icon size={13} />
-                {label}
+                <LogOut size={13} color="#dc2626" />
+                <span>Log Out</span>
               </button>
-            ))}
-          </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                closeDropdown();
+                if (onNavigate) onNavigate('LOGIN');
+              }}
+              className="btn btn-primary btn-sm"
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '0.45rem',
+                fontSize: '0.8125rem',
+                fontWeight: 700,
+                padding: '0.35rem 0.85rem',
+                borderRadius: 'var(--r-md)',
+                cursor: 'pointer',
+              }}
+              title="Log in to institutional portal"
+            >
+              <LogIn size={14} />
+              <span>Log In</span>
+            </button>
+          )}
 
           {/* Right side actions */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
