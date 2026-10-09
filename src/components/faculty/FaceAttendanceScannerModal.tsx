@@ -22,6 +22,7 @@ import {
   soundEffects,
 } from '../../utils/cameraZoomController';
 import confetti from 'canvas-confetti';
+import { VirtualClassroomEnvironment } from './VirtualClassroomEnvironment';
 
 interface FaceAttendanceScannerModalProps {
   isOpen: boolean;
@@ -29,7 +30,7 @@ interface FaceAttendanceScannerModalProps {
   targetClass: CollegeClass | null;
 }
 
-type ModeType = 'LIVE_WEBCAM' | 'CLASSROOM_SIM' | 'YOLO11_BACKEND';
+type ModeType = 'VIRTUAL_360' | 'LIVE_WEBCAM' | 'CLASSROOM_SIM' | 'YOLO11_BACKEND';
 
 export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProps> = ({
   isOpen,
@@ -59,7 +60,8 @@ export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProp
   const [targetPan, setTargetPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   // Camera & Device states
-  const [activeMode, setActiveMode] = useState<ModeType>('LIVE_WEBCAM');
+  const [activeMode, setActiveMode] = useState<ModeType>('VIRTUAL_360');
+  const locallyMarkedIdsRef = useRef<Set<string>>(new Set());
   const [trackingMode, setTrackingMode] = useState<ScanTrackingMode>('AUTO_PATROL');
   const [roomPreset, setRoomPreset] = useState<ClassroomRoomPreset>('STANDARD');
   const [videoDevices, setVideoDevices] = useState<MediaDeviceInfo[]>([]);
@@ -298,6 +300,7 @@ export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProp
   // Auto-mark attendance callback
   const handleAutoMark = useCallback((studentId: string, confidence: number, distance: number, currentZoomVal: number) => {
     if (!targetClass) return;
+    locallyMarkedIdsRef.current.add(studentId);
     const res = markAttendanceViaFace(targetClass.id, studentId, confidence, activeSession?.id);
     if (res.success && !res.alreadyMarked) {
       if (settings.soundFeedback) soundEffects.playSuccessChime();
@@ -480,8 +483,8 @@ export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProp
     let localLock = 0;
 
     const processFrame = async () => {
-      // In YOLO11 Backend mode, the server handles inference and streaming
-      if (activeMode === 'YOLO11_BACKEND') {
+      // In Virtual 360 or YOLO11 Backend mode, dedicated engines manage the environment
+      if (activeMode === 'VIRTUAL_360' || activeMode === 'YOLO11_BACKEND') {
         timeoutId = setTimeout(processFrame, 400);
         return;
       }
@@ -531,7 +534,7 @@ export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProp
       if (trackingMode === 'AUTO_PATROL') {
         // Find unmarked students currently visible in frame
         const unmarkedCandidates = faces.filter(
-          (f) => f.student_id && !presentStudentIds.has(f.student_id)
+          (f) => f.student_id && !presentStudentIds.has(f.student_id) && !locallyMarkedIdsRef.current.has(f.student_id)
         );
 
         if (unmarkedCandidates.length > 0) {
@@ -624,8 +627,6 @@ export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProp
     enrolledStudents,
     presentStudentIds,
     settings,
-    activeTargetId,
-    lockProgress,
     handleAutoMark,
   ]);
 
@@ -800,6 +801,25 @@ export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProp
                 border: '1px solid rgba(255, 255, 255, 0.1)',
               }}
             >
+              <button
+                className="btn btn-xs"
+                style={{
+                  background: activeMode === 'VIRTUAL_360' ? '#2563eb' : 'transparent',
+                  color: activeMode === 'VIRTUAL_360' ? '#ffffff' : '#94a3b8',
+                  fontSize: '0.72rem',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 4,
+                  padding: '3px 8px',
+                }}
+                onClick={() => {
+                  stopCamera();
+                  setActiveMode('VIRTUAL_360');
+                }}
+              >
+                <Compass size={13} /> 360° Virtual Classroom
+              </button>
               <button
                 className="btn btn-xs"
                 style={{
@@ -1147,8 +1167,10 @@ export const FaceAttendanceScannerModal: React.FC<FaceAttendanceScannerModalProp
                 background: 'radial-gradient(circle at center, #0f172a 0%, #020617 100%)',
               }}
             >
-              {/* Actual Video Feed (LIVE WEBCAM) */}
-              {activeMode === 'LIVE_WEBCAM' ? (
+              {/* 360 Virtual Classroom Environment / Live Video / Backend / Simulator */}
+              {activeMode === 'VIRTUAL_360' && targetClass ? (
+                <VirtualClassroomEnvironment targetClass={targetClass} onClose={onClose} />
+              ) : activeMode === 'LIVE_WEBCAM' ? (
                 <>
                   <video
                     ref={videoRef}

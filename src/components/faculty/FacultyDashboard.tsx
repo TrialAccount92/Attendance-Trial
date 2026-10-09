@@ -4,7 +4,7 @@ import {
   Play, Square, ChevronDown, ChevronUp, BarChart3,
   CheckCircle, X as XIcon, Clock, QrCode, Edit3, Users,
   Plus, Edit2, Trash2, Calendar, MapPin, Layers, Upload,
-  CheckCheck, Download, FileText, Scan,
+  CheckCheck, Download, FileText, Scan, Camera,
 } from 'lucide-react';
 import { ActiveSessionModal } from './ActiveSessionModal';
 import { ClassScheduleModal } from './ClassScheduleModal';
@@ -192,6 +192,22 @@ export const FacultyDashboard: React.FC = () => {
           </button>
           <button className="btn btn-secondary" onClick={() => setIsImportTimetableOpen(true)}>
             <Upload size={14} /> Import Timetable
+          </button>
+          <button
+            className="btn btn-primary"
+            style={{
+              background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
+              border: 'none',
+              boxShadow: '0 2px 8px rgba(99, 102, 241, 0.35)',
+              color: '#ffffff',
+            }}
+            onClick={() => {
+              setFaceScannerClass(myClasses[0] || classes[0] || null);
+              setIsFaceScannerOpen(true);
+            }}
+            title="Launch 360° Virtual Smart Classroom Camera Scanner"
+          >
+            <Camera size={14} /> 360° Virtual Classroom Scanner
           </button>
           <button
             className="btn btn-primary"

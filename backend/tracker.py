@@ -76,13 +76,14 @@ class KalmanFilter2D:
 
     def update(self, mean: np.ndarray, covariance: np.ndarray, measurement: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         projected_mean, projected_cov = self.project(mean, covariance)
-        chol_factor, lower = np.linalg.cholesky(projected_cov), True
-        kalman_gain = np.linalg.solve(chol_factor, self._update_mat.dot(covariance).T).T
-        kalman_gain = np.linalg.solve(chol_factor.T, kalman_gain.T).T
+        try:
+            kalman_gain = np.linalg.solve(projected_cov, self._update_mat.dot(covariance)).T
+        except np.linalg.LinAlgError:
+            kalman_gain = covariance.dot(self._update_mat.T).dot(np.linalg.pinv(projected_cov))
 
         innovation = measurement - projected_mean
-        new_mean = mean + innovation.dot(kalman_gain.T)
-        new_covariance = covariance - np.linalg.multi_dot((kalman_gain, projected_cov, kalman_gain.T))
+        new_mean = mean + kalman_gain.dot(innovation)
+        new_covariance = covariance - kalman_gain.dot(self._update_mat).dot(covariance)
         return new_mean, new_covariance
 
 

@@ -222,8 +222,17 @@ def generate_mjpeg_stream():
                 track.match_confidence = 0.96
 
             # Check if verified and not yet recorded
-            if active_session and not track.is_attendance_marked and track.consecutive_hits >= 3:
+            if not track.is_attendance_marked and track.consecutive_hits >= 3:
                 track.is_attendance_marked = True
+                if not active_session:
+                    active_session = {
+                        "session_id": f"sess-auto-{int(time.time())}",
+                        "class_id": "cls-dbms-3a",
+                        "topic": "Smart Classroom 360 Facial Attendance",
+                        "camera_source": stream_buffer.source,
+                        "start_time": time.time(),
+                        "created_at": time.strftime("%Y-%m-%d %H:%M:%S")
+                    }
                 marked_students_cache[track.matched_student_id] = {
                     "student_id": track.matched_student_id,
                     "student_name": track.matched_student_name,
