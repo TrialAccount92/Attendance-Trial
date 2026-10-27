@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { useAttendance } from '../context/AttendanceContext';
 import { Navbar } from '../components/layout/Navbar';
 import { FacultyDashboard } from '../components/faculty/FacultyDashboard';
@@ -10,14 +10,8 @@ interface FacultyPageProps {
 }
 
 export const FacultyPage: React.FC<FacultyPageProps> = ({ onNavigate }) => {
-  const { currentRole, switchUser } = useAttendance();
   const [isLiveModalOpen, setIsLiveModalOpen] = useState(false);
-
-  useEffect(() => {
-    if (currentRole !== 'FACULTY') {
-      switchUser('FACULTY', 'usr-fac-1');
-    }
-  }, [currentRole, switchUser]);
+  const { startAttendanceSession } = useAttendance();
 
   return (
     <div className="app-container">
@@ -34,7 +28,9 @@ export const FacultyPage: React.FC<FacultyPageProps> = ({ onNavigate }) => {
       <ActiveSessionModal
         isOpen={isLiveModalOpen}
         onClose={() => setIsLiveModalOpen(false)}
-        onStart={() => {}}
+        onStart={async (classId, topic, options) => {
+          await startAttendanceSession(classId, topic, options);
+        }}
       />
 
       <footer
@@ -56,10 +52,10 @@ export const FacultyPage: React.FC<FacultyPageProps> = ({ onNavigate }) => {
           }}
         >
           <div style={{ fontSize: '0.8125rem', color: 'var(--text-muted)' }}>
-            <strong style={{ color: 'var(--text-secondary)' }}>AttendPulse Faculty Console</strong> — YOLO11 + ByteTrack AI &amp; Dynamic QR Sessions
+            <strong style={{ color: 'var(--text-secondary)' }}>AttendPulse Faculty Console</strong> — Face Recognition &amp; Rotating QR Sessions
           </div>
           <div style={{ display: 'flex', gap: '1.5rem', fontSize: '0.75rem', color: 'var(--text-disabled)' }}>
-            <span>Zero-Latency Pipe Flushing</span>
+            <span>Leave &amp; Correction Review</span>
             <span>Dispute Workflow</span>
             <span>CSV Ledger Export</span>
           </div>

@@ -1,11 +1,9 @@
 import React, { useState, useRef } from 'react';
-import * as XLSX from 'xlsx';
 import { useAttendance } from '../../context/AttendanceContext';
 import {
   X, Upload, Calendar, Download, CheckCircle2,
-  AlertTriangle, ArrowRight, FileText, Clock, MapPin,
-} from 'lucide-react';
-import { CollegeClass, Subject } from '../../types';
+  AlertTriangle, ArrowRight, FileText, } from 'lucide-react';
+import { Subject } from '../../types';
 
 interface ImportTimetableModalProps {
   isOpen: boolean;
@@ -63,8 +61,10 @@ export const ImportTimetableModal: React.FC<ImportTimetableModalProps> = ({ isOp
     setFileName(file.name);
 
     const reader = new FileReader();
-    reader.onload = (e) => {
+    reader.onload = async (e) => {
       try {
+        // Loaded on demand so the spreadsheet parser isn't in the main bundle.
+        const XLSX = await import('xlsx');
         const data = new Uint8Array(e.target?.result as ArrayBuffer);
         const workbook = XLSX.read(data, { type: 'array' });
         const firstSheetName = workbook.SheetNames[0];
@@ -168,7 +168,7 @@ export const ImportTimetableModal: React.FC<ImportTimetableModalProps> = ({ isOp
     if (file) processFile(file);
   };
 
-  const handleConfirmImport = () => {
+  const handleConfirmImport = async () => {
     const validRows = parsedRows.filter((r) => r.isValid);
     if (validRows.length === 0) return;
 
@@ -182,8 +182,11 @@ export const ImportTimetableModal: React.FC<ImportTimetableModalProps> = ({ isOp
       schedule_time: r.schedule_time,
     }));
 
-    const res = bulkImportClasses(currentFaculty.id, classesToImport, replaceExisting);
-    setImportResult(res);
+    try {
+      setImportResult(await bulkImportClasses(currentFaculty.id, classesToImport, replaceExisting));
+    } catch (err) {
+      setParseError(err instanceof Error ? err.message : 'Import failed.');
+    }
   };
 
   const validCount = parsedRows.filter((r) => r.isValid).length;

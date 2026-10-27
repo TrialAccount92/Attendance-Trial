@@ -1,7 +1,7 @@
 import React from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import { Student } from '../../types';
-import { X, Printer, ShieldCheck, ShieldAlert, Award, FileText, CheckCircle2, AlertTriangle } from 'lucide-react';
+import { X, Printer, ShieldCheck, ShieldAlert, Award, FileText, AlertTriangle } from 'lucide-react';
 
 interface HallTicketModalProps {
   isOpen: boolean;

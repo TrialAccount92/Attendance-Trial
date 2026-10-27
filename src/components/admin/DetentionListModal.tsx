@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
-import { X, Printer, ShieldAlert, AlertTriangle, Building2, Download } from 'lucide-react';
+import { X, Printer, ShieldAlert, Download } from 'lucide-react';
 import { exportToCSV } from '../../utils/exportUtils';
 
 interface DetentionListModalProps {

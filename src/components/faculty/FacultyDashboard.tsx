@@ -4,7 +4,7 @@ import {
   Play, Square, ChevronDown, ChevronUp, BarChart3,
   CheckCircle, X as XIcon, Clock, QrCode, Edit3, Users,
   Plus, Edit2, Trash2, Calendar, MapPin, Layers, Upload,
-  CheckCheck, Download, FileText, Scan, Camera,
+  CheckCheck, Download, FileText, Scan,
 } from 'lucide-react';
 import { ActiveSessionModal } from './ActiveSessionModal';
 import { ClassScheduleModal } from './ClassScheduleModal';
@@ -14,17 +14,19 @@ import { LeaveApplicationsInboxModal } from './LeaveApplicationsInboxModal';
 import { AcademicCalendarModal } from '../common/AcademicCalendarModal';
 import { ScheduleExtraClassModal } from './ScheduleExtraClassModal';
 import { FaceAttendanceScannerModal } from './FaceAttendanceScannerModal';
+import { SessionRecordsModal } from './SessionRecordsModal';
 import { exportClassMatrixCSV } from '../../utils/exportUtils';
 import { Badge } from '../common/Badge';
 import { ProgressBar } from '../common/ProgressBar';
 import { CollegeClass } from '../../types';
+import { StartSessionOptions } from '../../context/AttendanceContext';
 
 export const FacultyDashboard: React.FC = () => {
   const {
-    currentFaculty, classes, subjects, records, students,
+    currentFaculty, classes, subjects, records, sessions,
     activeSession, startAttendanceSession, closeAttendanceSession,
     reviewCorrectionRequest, correctionRequests, leaveApplications,
-    extraClasses, cancelExtraClass,
+    extraClasses, cancelExtraClass, getClassEnrolledStudents,
     manualUpdateAttendance, removeClass,
   } = useAttendance();
 
@@ -44,6 +46,7 @@ export const FacultyDashboard: React.FC = () => {
   const [isFaceScannerOpen, setIsFaceScannerOpen] = useState(false);
   const [faceScannerClass, setFaceScannerClass] = useState<CollegeClass | null>(null);
   const [ledgerClassFilter, setLedgerClassFilter] = useState<string>('ALL');
+  const [editingSessionId, setEditingSessionId] = useState<string | null>(null);
 
   if (!currentFaculty) return <div className="empty-state"><p>No faculty profile found.</p></div>;
 
@@ -59,13 +62,16 @@ export const FacultyDashboard: React.FC = () => {
     return 0;
   });
 
-  const handleStartSession = (classId: string, topic?: string) => {
-    startAttendanceSession(classId, topic);
+  const handleStartSession = async (classId: string, topic?: string, options?: StartSessionOptions) => {
+    await startAttendanceSession(classId, topic, options);
     setIsSessionModalOpen(true);
   };
 
-  const endSession = () => {
-    if (activeSession) closeAttendanceSession(activeSession.id);
+  const endSession = async () => {
+    if (!activeSession) return;
+    if (!window.confirm('End this session? Students who have not been marked will be recorded absent.')) return;
+    const res = await closeAttendanceSession(activeSession.id);
+    window.alert(`Session closed: ${res.present} present, ${res.marked_absent} marked absent.`);
   };
 
   const handleOpenAddModal = () => {
@@ -89,26 +95,22 @@ export const FacultyDashboard: React.FC = () => {
   };
 
   const getClassStats = (classId: string) => {
-    const cls = classes.find((c) => c.id === classId);
-    if (!cls) return { total: 0, rate: 0, sessions: 0 };
-    const enrolled = students.filter((s) => s.semester === cls.semester && s.division === cls.division);
+    const enrolled = getClassEnrolledStudents(classId);
     const rs = records.filter((r) => r.class_id === classId);
-    const sessions = [...new Set(rs.map((r) => r.session_id))].length;
-    const present = rs.filter((r) => r.status === 'PRESENT').length;
-    const rate = enrolled.length > 0 && sessions > 0
-      ? Math.round((present / (enrolled.length * sessions)) * 100) : 0;
-    return { total: enrolled.length, rate, sessions };
+    const sessionCount = new Set(rs.map((r) => r.session_id)).size;
+    const attended = rs.filter((r) => r.status === 'PRESENT' || r.status === 'LATE' || r.status === 'EXCUSED').length;
+    const rate = rs.length > 0 ? Math.round((attended / rs.length) * 100) : 0;
+    return { total: enrolled.length, rate, sessions: sessionCount };
   };
 
-  const myStudents = [...new Set(
-    students.filter((s) => myClasses.some((c) => c.division === s.division)).map((s) => s.id)
-  )].length;
+  const myStudents = new Set(myClasses.flatMap((c) => getClassEnrolledStudents(c.id).map((s) => s.id))).size;
 
   // Conducted lectures aggregation for Faculty Ledger
   const myClassIds = myClasses.map((c) => c.id);
   const myRecords = records.filter((r) => myClassIds.includes(r.class_id));
 
   const sessionAggregates: Record<string, {
+    sessionId: string;
     classId: string;
     dateStr: string;
     total: number;
@@ -117,13 +119,17 @@ export const FacultyDashboard: React.FC = () => {
     late: number;
   }> = {};
 
+  // One ledger row per lecture (session); only closed lectures are history.
+  const sessionStart = new Map(sessions.map((sess) => [sess.id, sess] as const));
   myRecords.forEach((r) => {
-    const dStr = r.marked_at.split('T')[0];
-    const key = `${r.class_id}_${dStr}`;
+    const sess = sessionStart.get(r.session_id);
+    if (!sess || sess.status !== 'CLOSED') return;
+    const key = r.session_id;
     if (!sessionAggregates[key]) {
       sessionAggregates[key] = {
+        sessionId: r.session_id,
         classId: r.class_id,
-        dateStr: dStr,
+        dateStr: sess.start_time.slice(0, 10),
         total: 0,
         present: 0,
         absent: 0,
@@ -131,7 +137,7 @@ export const FacultyDashboard: React.FC = () => {
       };
     }
     sessionAggregates[key].total++;
-    if (r.status === 'PRESENT') sessionAggregates[key].present++;
+    if (r.status === 'PRESENT' || r.status === 'EXCUSED') sessionAggregates[key].present++;
     else if (r.status === 'LATE') sessionAggregates[key].late++;
     else sessionAggregates[key].absent++;
   });
@@ -196,22 +202,6 @@ export const FacultyDashboard: React.FC = () => {
           <button
             className="btn btn-primary"
             style={{
-              background: 'linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%)',
-              border: 'none',
-              boxShadow: '0 2px 8px rgba(99, 102, 241, 0.35)',
-              color: '#ffffff',
-            }}
-            onClick={() => {
-              setFaceScannerClass(myClasses[0] || classes[0] || null);
-              setIsFaceScannerOpen(true);
-            }}
-            title="Launch 360° Virtual Smart Classroom Camera Scanner"
-          >
-            <Camera size={14} /> 360° Virtual Classroom Scanner
-          </button>
-          <button
-            className="btn btn-primary"
-            style={{
               background: 'linear-gradient(135deg, #2563eb 0%, #0284c7 100%)',
               border: 'none',
               boxShadow: '0 2px 8px rgba(37, 99, 235, 0.35)',
@@ -222,7 +212,7 @@ export const FacultyDashboard: React.FC = () => {
               setIsFaceScannerOpen(true);
             }}
           >
-            <Scan size={14} /> AI Face Auto-Attendance
+            <Scan size={14} /> Face Recognition Attendance
           </button>
           <button className="btn btn-secondary" onClick={() => setIsSessionModalOpen(true)}>
             <QrCode size={14} /> QR Session
@@ -457,7 +447,7 @@ export const FacultyDashboard: React.FC = () => {
                         {/* Actions: Start Session, Edit Schedule, Remove Class, Expand Roster */}
                         <div style={{ display: 'flex', gap: '0.375rem', alignItems: 'center', flexShrink: 0 }}>
                           {!isActive && !activeSession && (
-                            <button className="btn btn-primary btn-sm" onClick={() => handleStartSession(cls.id)}>
+                            <button className="btn btn-primary btn-sm" onClick={() => setIsSessionModalOpen(true)} title="Start a QR attendance session">
                               <Play size={12} /> Start
                             </button>
                           )}
@@ -469,7 +459,7 @@ export const FacultyDashboard: React.FC = () => {
                               border: 'none',
                               color: '#fff',
                             }}
-                            title="AI Facial Recognition Attendance with Auto-Zoom"
+                            title="Take attendance by face recognition"
                             onClick={() => {
                               setFaceScannerClass(cls);
                               setIsFaceScannerOpen(true);
@@ -493,7 +483,7 @@ export const FacultyDashboard: React.FC = () => {
                             className="btn btn-ghost btn-sm"
                             title="Export Course Attendance Sheet (.csv)"
                             onClick={() => {
-                              const enrolled = students.filter((s) => s.semester === cls.semester && s.division === cls.division);
+                              const enrolled = getClassEnrolledStudents(cls.id);
                               const recs = records.filter((r) => r.class_id === cls.id);
                               const sub = subjects.find((s) => s.id === cls.subject_id);
                               exportClassMatrixCSV(sub?.name || 'Class', sub?.code || 'CRS', enrolled, recs);
@@ -545,14 +535,13 @@ export const FacultyDashboard: React.FC = () => {
                           </div>
 
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '0.375rem' }}>
-                            {students
-                              .filter((s) => s.division === cls.division && s.semester === cls.semester)
+                            {getClassEnrolledStudents(cls.id)
                               .map((stu) => {
                                 const rec = records.find(
                                   (r) => r.class_id === cls.id && r.student_id === stu.id && activeSession?.id === r.session_id
                                 );
                                 return (
-                                  <div key={stu.id} className={`roster-row${rec?.status === 'PRESENT' ? ' is-present' : ''}`}>
+                                  <div key={stu.id} className={`roster-row${rec?.status === 'PRESENT' || rec?.status === 'LATE' ? ' is-present' : ''}`}>
                                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
                                       <div style={{ width: 28, height: 28, borderRadius: 'var(--r-full)', background: 'var(--blue-100)', color: 'var(--blue-600)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.625rem', fontWeight: 800 }}>
                                         {stu.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
@@ -569,14 +558,22 @@ export const FacultyDashboard: React.FC = () => {
                                           {activeSession && (
                                             <button
                                               className="btn btn-ghost btn-xs"
+                                              title={rec.status === 'PRESENT' ? 'Mark absent' : 'Mark present'}
                                               onClick={() => manualUpdateAttendance(activeSession!.id, stu.id, cls.id, rec.status === 'PRESENT' ? 'ABSENT' : 'PRESENT')}
                                             >
                                               <Edit3 size={11} />
                                             </button>
                                           )}
                                         </>
+                                      ) : isActive ? (
+                                        <button
+                                          className="btn btn-secondary btn-xs"
+                                          onClick={() => manualUpdateAttendance(activeSession!.id, stu.id, cls.id, 'PRESENT')}
+                                        >
+                                          Mark present
+                                        </button>
                                       ) : (
-                                        <span style={{ fontSize: '0.6875rem', color: 'var(--gray-300)' }}>Not marked</span>
+                                        <span style={{ fontSize: '0.6875rem', color: 'var(--gray-300)' }}>No live session</span>
                                       )}
                                     </div>
                                   </div>
@@ -706,7 +703,7 @@ export const FacultyDashboard: React.FC = () => {
                       const rate = lec.total > 0 ? Math.round(((lec.present + lec.late) / lec.total) * 100) : 0;
 
                       return (
-                        <tr key={idx}>
+                        <tr key={lec.sessionId || idx}>
                           <td style={{ fontWeight: 600, color: 'var(--gray-800)', whiteSpace: 'nowrap' }}>
                             {d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
                           </td>
@@ -728,15 +725,10 @@ export const FacultyDashboard: React.FC = () => {
                           <td style={{ textAlign: 'right' }}>
                             <button
                               className="btn btn-secondary btn-xs"
-                              title="Review or Modify Attendance Sheet"
-                              onClick={() => {
-                                if (cls) {
-                                  setSelectedClassForAttendance(cls);
-                                  setIsQuickAttendanceOpen(true);
-                                }
-                              }}
+                              title="Review or correct this lecture's attendance"
+                              onClick={() => setEditingSessionId(lec.sessionId)}
                             >
-                              <Edit3 size={11} /> Edit Roll Call
+                              <Edit3 size={11} /> Edit Attendance
                             </button>
                           </td>
                         </tr>
@@ -917,7 +909,9 @@ export const FacultyDashboard: React.FC = () => {
         onClose={() => setIsExtraClassModalOpen(false)}
       />
 
-      {/* Modal: AI Facial Recognition Camera Scanner with Classroom Auto-Zoom */}
+      <SessionRecordsModal sessionId={editingSessionId} onClose={() => setEditingSessionId(null)} />
+
+      {/* Modal: Face recognition attendance scanner */}
       <FaceAttendanceScannerModal
         isOpen={isFaceScannerOpen}
         onClose={() => setIsFaceScannerOpen(false)}

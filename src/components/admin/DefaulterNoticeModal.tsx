@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
-import { X, Printer, Download, AlertTriangle, FileText, Megaphone } from 'lucide-react';
+import { X, Printer, Download, AlertTriangle } from 'lucide-react';
 import { exportToCSV } from '../../utils/exportUtils';
 
 interface DefaulterNoticeModalProps {
@@ -26,7 +26,8 @@ export const DefaulterNoticeModal: React.FC<DefaulterNoticeModalProps> = ({ isOp
     .map((stu) => {
       const rs = records.filter((r) => r.student_id === stu.id);
       const total = rs.length;
-      const present = rs.filter((r) => r.status === 'PRESENT' || r.status === 'LATE').length;
+      // Approved leave (EXCUSED) counts as attendance, same as the student's own dashboard.
+      const present = rs.filter((r) => r.status === 'PRESENT' || r.status === 'LATE' || r.status === 'EXCUSED').length;
       const pct = total > 0 ? Math.round((present / total) * 1000) / 10 : 100;
       const deficit = Math.max(0, Math.ceil((minAttendanceThreshold * total - present) / (1 - minAttendanceThreshold)));
 

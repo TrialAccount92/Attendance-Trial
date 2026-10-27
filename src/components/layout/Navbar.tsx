@@ -1,10 +1,10 @@
 import React, { useState } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import {
-  QrCode, GraduationCap, ShieldCheck, UserCheck, RotateCcw, Radio,
-  Bell, HelpCircle, Calculator, X, Plus, Clock, CheckCircle2, AlertCircle,
-  TrendingUp, Users, Check, LogOut, LogIn,
+  QrCode, RotateCcw, Radio,
+  Bell, HelpCircle, Calculator, X, Plus, Clock, CheckCircle2, Users, Check, LogOut, KeyRound,
 } from 'lucide-react';
+import { ChangePasswordModal } from '../common/ChangePasswordModal';
 import { CorrectionRequestModal } from '../student/CorrectionRequestModal';
 import { Badge } from '../common/Badge';
 import { calculateAttendanceMetrics } from '../../utils/attendanceCalc';
@@ -22,7 +22,6 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenLiveSession, currentRoute,
     currentRole,
     currentUser,
     currentStudent,
-    switchUser,
     isAuthenticated,
     logout,
     activeSession,
@@ -35,11 +34,11 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenLiveSession, currentRoute,
     getStudentStats,
     resetToDefaultData,
     students,
-    facultyList,
   } = useAttendance();
 
   const [activeDropdown, setActiveDropdown] = useState<'NONE' | 'ANNOUNCEMENTS' | 'REQUESTS' | 'CALCULATOR'>('NONE');
   const [isCorrectionModalOpen, setIsCorrectionModalOpen] = useState(false);
+  const [isPasswordModalOpen, setIsPasswordModalOpen] = useState(false);
 
   // Calculator simulation state
   const [calcThreshold, setCalcThreshold] = useState<number>(minAttendanceThreshold || 0.75);
@@ -137,129 +136,47 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenLiveSession, currentRoute,
             </button>
           )}
 
-          {/* Authentication & Portal Status Option (Replaces public role switcher) */}
-          {isAuthenticated ? (
-            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-              <div
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.4rem',
-                  padding: '0.3rem 0.75rem',
-                  borderRadius: 'var(--r-full)',
-                  fontSize: '0.78125rem',
-                  fontWeight: 700,
-                  background: currentRole === 'STUDENT' ? '#eff6ff' : currentRole === 'FACULTY' ? '#ecfdf5' : '#fffbeb',
-                  color: currentRole === 'STUDENT' ? '#1d4ed8' : currentRole === 'FACULTY' ? '#047857' : '#b45309',
-                  border: `1px solid ${currentRole === 'STUDENT' ? '#bfdbfe' : currentRole === 'FACULTY' ? '#a7f3d0' : '#fde68a'}`,
-                }}
-              >
-                {currentRole === 'STUDENT' && <GraduationCap size={14} />}
-                {currentRole === 'FACULTY' && <UserCheck size={14} />}
-                {currentRole === 'ADMIN' && <ShieldCheck size={14} />}
-                <span>
-                  {currentRole === 'STUDENT' ? 'Student Portal' : currentRole === 'FACULTY' ? 'Faculty Portal' : 'Admin Console'}
-                </span>
-              </div>
-
-              <button
-                onClick={() => {
-                  closeDropdown();
-                  logout();
-                  if (onNavigate) onNavigate('LOGIN');
-                }}
-                className="btn btn-ghost btn-sm"
-                style={{
-                  display: 'inline-flex',
-                  alignItems: 'center',
-                  gap: '0.35rem',
-                  fontSize: '0.78125rem',
-                  fontWeight: 600,
-                  color: '#dc2626',
-                  background: '#fef2f2',
-                  border: '1px solid #fecaca',
-                  padding: '0.3rem 0.65rem',
-                  borderRadius: 'var(--r-md)',
-                  cursor: 'pointer',
-                }}
-                title="Log out of institutional portal"
-              >
-                <LogOut size={13} color="#dc2626" />
-                <span>Log Out</span>
-              </button>
-            </div>
-          ) : (
-            <button
-              onClick={() => {
-                closeDropdown();
-                if (onNavigate) onNavigate('LOGIN');
-              }}
-              className="btn btn-primary btn-sm"
-              style={{
-                display: 'inline-flex',
-                alignItems: 'center',
-                gap: '0.45rem',
-                fontSize: '0.8125rem',
-                fontWeight: 700,
-                padding: '0.35rem 0.85rem',
-                borderRadius: 'var(--r-md)',
-                cursor: 'pointer',
-              }}
-              title="Log in to institutional portal"
-            >
-              <LogIn size={14} />
-              <span>Log In</span>
-            </button>
-          )}
-
           {/* Right side actions */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-            {/* Persona selector */}
-            {currentRole === 'STUDENT' && (
-              <select
-                className="form-select form-select-sm"
-                style={{ width: 'auto', maxWidth: 280 }}
-                value={currentUser.id}
-                onChange={(e) => switchUser('STUDENT', e.target.value)}
-                title="Switch Student Profile"
-              >
-                {[
-                  { name: 'Semester 3 · Division A', list: students.filter((s) => s.semester === 3 && s.division === 'A') },
-                  { name: 'Semester 3 · Division B', list: students.filter((s) => s.semester === 3 && s.division === 'B') },
-                  { name: 'Semester 5 · Division A', list: students.filter((s) => s.semester === 5 && s.division === 'A') },
-                ].map((grp) => (
-                  <optgroup key={grp.name} label={grp.name}>
-                    {grp.list.map((s) => {
-                      const stats = getStudentStats(s.id).overall;
-                      const pct = stats.percentage;
-                      const isLow = pct < (minAttendanceThreshold * 100);
-                      return (
-                        <option key={s.id} value={s.user_id}>
-                          {s.roll_number}. {s.name} — {pct}% {isLow ? '⚠' : '✓'}
-                        </option>
-                      );
-                    })}
-                  </optgroup>
-                ))}
-              </select>
-            )}
-            {currentRole === 'FACULTY' && (
-              <select
-                className="form-select form-select-sm"
-                style={{ width: 'auto', maxWidth: 280 }}
-                value={currentUser.id}
-                onChange={(e) => switchUser('FACULTY', e.target.value)}
-                title="Switch Faculty Profile"
-              >
-                {facultyList.map((f) => {
-                  const assignedCount = classes.filter((c) => c.faculty_id === f.id).length;
-                  return (
-                    <option key={f.id} value={f.user_id}>
-                      {f.name} — {f.designation} ({assignedCount} classes)
-                    </option>
-                  );
-                })}
-              </select>
+            {isAuthenticated && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <button
+                  className="btn btn-ghost btn-sm"
+                  onClick={() => {
+                    closeDropdown();
+                    setIsPasswordModalOpen(true);
+                  }}
+                  title="Change password"
+                  aria-label="Change password"
+                >
+                  <KeyRound size={14} />
+                </button>
+                <button
+                  onClick={async () => {
+                    closeDropdown();
+                    await logout();
+                    if (onNavigate) onNavigate('LOGIN');
+                  }}
+                  className="btn btn-ghost btn-sm"
+                  style={{
+                    display: 'inline-flex',
+                    alignItems: 'center',
+                    gap: '0.35rem',
+                    fontSize: '0.78125rem',
+                    fontWeight: 600,
+                    color: '#dc2626',
+                    background: '#fef2f2',
+                    border: '1px solid #fecaca',
+                    padding: '0.3rem 0.65rem',
+                    borderRadius: 'var(--r-md)',
+                    cursor: 'pointer',
+                  }}
+                  title="Sign out"
+                >
+                  <LogOut size={13} color="#dc2626" />
+                  <span>Log Out</span>
+                </button>
+              </div>
             )}
 
             {/* Attendance Goal Simulator - Available for Students, Faculty & Admin */}
@@ -619,14 +536,26 @@ export const Navbar: React.FC<NavbarProps> = ({ onOpenLiveSession, currentRoute,
               </div>
             </div>
 
-            {/* Reset button */}
-            <button className="btn-reset-demo" onClick={resetToDefaultData} title="Reset demo data">
-              <RotateCcw size={12} />
-              Reset
-            </button>
+            {/* Demo data reset (admins only) */}
+            {currentRole === 'ADMIN' && (
+              <button
+                className="btn-reset-demo"
+                onClick={async () => {
+                  if (!window.confirm('Erase ALL data (students, attendance, faces) and reload the demo data set? This cannot be undone.')) return;
+                  await resetToDefaultData();
+                  if (onNavigate) onNavigate('LOGIN');
+                }}
+                title="Erase everything and reload the demo data"
+              >
+                <RotateCcw size={12} />
+                Reset demo
+              </button>
+            )}
           </div>
         </div>
       </header>
+
+      {isPasswordModalOpen && <ChangePasswordModal onClose={() => setIsPasswordModalOpen(false)} />}
 
       {/* Modal for new request if triggered from navbar */}
       <CorrectionRequestModal

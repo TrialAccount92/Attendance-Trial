@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 
-export type AppRoute = 'LOGIN' | 'STUDENT' | 'FACULTY' | 'ADMIN' | 'GATEWAY';
+export type AppRoute = 'LOGIN' | 'STUDENT' | 'FACULTY' | 'ADMIN';
 
 export function parseCurrentRoute(): AppRoute {
   const hash = (window.location.hash || '').toLowerCase();

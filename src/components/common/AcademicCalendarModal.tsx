@@ -1,11 +1,10 @@
 import React, { useState } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
-import { AcademicEventType, AcademicEvent } from '../../types';
+import { AcademicEventType } from '../../types';
 import {
   Calendar, X, Plus, Trash2, Printer, Search,
   AlertCircle, Sparkles, GraduationCap, PartyPopper, CheckCircle2,
-  Clock, ShieldAlert,
-} from 'lucide-react';
+  Clock, } from 'lucide-react';
 
 interface AcademicCalendarModalProps {
   isOpen: boolean;
@@ -56,7 +55,7 @@ export const AcademicCalendarModal: React.FC<AcademicCalendarModalProps> = ({
     return matchesType && matchesSearch;
   });
 
-  const handleCreateEvent = (e: React.FormEvent) => {
+  const handleCreateEvent = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError('');
 
@@ -69,7 +68,7 @@ export const AcademicCalendarModal: React.FC<AcademicCalendarModalProps> = ({
       return;
     }
 
-    addAcademicEvent({
+    await addAcademicEvent({
       title: newTitle.trim(),
       type: newType,
       start_date: newStartDate,

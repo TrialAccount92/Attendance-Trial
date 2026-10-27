@@ -1,6 +1,6 @@
 import React from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
-import { X, Printer, CheckCircle2, AlertTriangle, ShieldCheck, Download } from 'lucide-react';
+import { X, Printer, CheckCircle2, AlertTriangle, ShieldCheck } from 'lucide-react';
 
 interface OfficialReportModalProps {
   isOpen: boolean;

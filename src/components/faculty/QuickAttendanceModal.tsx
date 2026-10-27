@@ -2,9 +2,9 @@ import React, { useState, useEffect } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import { CollegeClass, AttendanceStatus } from '../../types';
 import {
-  X, CheckCheck, UserCheck, Clock, BookOpen,
-  Calendar, Check, AlertCircle, Users,
-} from 'lucide-react';
+  X, CheckCheck, BookOpen,
+  Check, } from 'lucide-react';
+import { localDateString } from '../../utils/date';
 
 interface QuickAttendanceModalProps {
   isOpen: boolean;
@@ -17,12 +17,14 @@ export const QuickAttendanceModal: React.FC<QuickAttendanceModalProps> = ({
   onClose,
   initialClass,
 }) => {
-  const { currentFaculty, classes, subjects, students, markBatchAttendance } = useAttendance();
+  const { currentFaculty, classes, subjects, getClassEnrolledStudents, markBatchAttendance } = useAttendance();
+  const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
 
   const myClasses = currentFaculty ? classes.filter((c) => c.faculty_id === currentFaculty.id) : [];
 
   const [selectedClassId, setSelectedClassId] = useState<string>('');
-  const [date, setDate] = useState<string>(() => new Date().toISOString().split('T')[0]);
+  const [date, setDate] = useState<string>(() => localDateString());
   const [topic, setTopic] = useState<string>('');
   const [rosterMap, setRosterMap] = useState<Record<string, AttendanceStatus>>({});
   const [submitted, setSubmitted] = useState(false);
@@ -38,20 +40,17 @@ export const QuickAttendanceModal: React.FC<QuickAttendanceModalProps> = ({
   const activeClass = classes.find((c) => c.id === selectedClassId) || initialClass || myClasses[0];
   const activeSubject = activeClass ? subjects.find((s) => s.id === activeClass.subject_id) : null;
 
-  const enrolledStudents = activeClass
-    ? students.filter((s) => s.semester === activeClass.semester && s.division === activeClass.division)
-    : [];
+  const enrolledStudents = activeClass ? getClassEnrolledStudents(activeClass.id) : [];
+  const rosterKey = enrolledStudents.map((s) => s.id).join(',');
 
-  // Initialize roster map with PRESENT by default when enrolled students change
+  // Everyone starts as PRESENT whenever the class (or its roster) changes.
   useEffect(() => {
-    if (enrolledStudents.length > 0) {
-      const initialMap: Record<string, AttendanceStatus> = {};
-      enrolledStudents.forEach((stu) => {
-        initialMap[stu.id] = rosterMap[stu.id] || 'PRESENT';
-      });
-      setRosterMap(initialMap);
-    }
-  }, [selectedClassId]);
+    const initialMap: Record<string, AttendanceStatus> = {};
+    rosterKey.split(',').filter(Boolean).forEach((id) => {
+      initialMap[id] = 'PRESENT';
+    });
+    setRosterMap(initialMap);
+  }, [selectedClassId, rosterKey, isOpen]);
 
   if (!isOpen) return null;
 
@@ -67,7 +66,7 @@ export const QuickAttendanceModal: React.FC<QuickAttendanceModalProps> = ({
     setRosterMap((prev) => ({ ...prev, [studentId]: status }));
   };
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeClass || enrolledStudents.length === 0) return;
 
@@ -76,7 +75,16 @@ export const QuickAttendanceModal: React.FC<QuickAttendanceModalProps> = ({
       status: rosterMap[stu.id] || 'PRESENT',
     }));
 
-    markBatchAttendance(activeClass.id, date, topic.trim(), payload);
+    setSaving(true);
+    setSaveError(null);
+    try {
+      await markBatchAttendance(activeClass.id, date, topic.trim(), payload);
+    } catch (err) {
+      setSaveError(err instanceof Error ? err.message : 'Could not save the roll call.');
+      return;
+    } finally {
+      setSaving(false);
+    }
     setSubmitted(true);
     setTimeout(() => {
       setSubmitted(false);
@@ -329,14 +337,18 @@ export const QuickAttendanceModal: React.FC<QuickAttendanceModalProps> = ({
               </div>
             </div>
 
+            {saveError && (
+              <div className="alert alert-danger" style={{ fontSize: '0.8125rem', marginTop: '0.75rem' }}>{saveError}</div>
+            )}
+
             {/* Submit Footer */}
             <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', paddingTop: '0.75rem', borderTop: '1px solid var(--gray-200)' }}>
               <button type="button" className="btn btn-secondary" onClick={onClose}>
                 Cancel
               </button>
-              <button type="submit" className="btn btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+              <button type="submit" className="btn btn-primary" disabled={saving} style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                 <Check size={14} />
-                Save Roll Call Attendance
+                {saving ? 'Saving…' : 'Save Roll Call Attendance'}
               </button>
             </div>
           </form>

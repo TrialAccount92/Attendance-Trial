@@ -1,38 +1,60 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
-import {
-  Camera, CheckCircle2, ShieldCheck, X, RefreshCw, Upload,
-  Sparkles, AlertCircle, Scan, UserCheck
-} from 'lucide-react';
+import { Camera, CheckCircle2, ShieldCheck, X, RefreshCw, AlertCircle, Info, UserCheck, ArrowLeftRight } from 'lucide-react';
 import confetti from 'canvas-confetti';
-import { extractFaceDescriptorFromImage } from '../../utils/faceRecognitionEngine';
+import {
+  captureLivenessEnrollment,
+  EnrollProgress,
+  EnrollmentResult,
+  loadFaceModels,
+  warmUpFaceModels,
+} from '../../utils/faceRecognitionEngine';
+import { errorMessage } from '../../api/client';
+import { Student } from '../../types';
 
 interface FaceEnrollmentModalProps {
   isOpen: boolean;
   onClose: () => void;
+  /** Enroll this student instead of the signed-in one (teachers enrolling from the scanner). */
+  student?: Student | null;
+  onEnrolled?: () => void;
 }
 
-export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({ isOpen, onClose }) => {
+type Phase = 'loading' | 'ready' | 'capturing' | 'review' | 'saving' | 'done';
+
+const STEP_LABELS: Array<{ key: EnrollProgress['step']; label: string }> = [
+  { key: 'center', label: 'Look straight' },
+  { key: 'turn-first', label: 'Turn one way' },
+  { key: 'turn-second', label: 'Turn the other way' },
+  { key: 'center-again', label: 'Look straight' },
+];
+
+export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({ isOpen, onClose, student, onEnrolled }) => {
   const { currentStudent, registerStudentFace } = useAttendance();
+  const target = student ?? currentStudent;
+  const forSomeoneElse = !!student && student.id !== currentStudent?.id;
 
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
-  const [capturedPhoto, setCapturedPhoto] = useState<string | null>(null);
-  const [extractedDescriptor, setExtractedDescriptor] = useState<number[] | null>(null);
-  const [isCameraStarting, setIsCameraStarting] = useState(false);
+  const abortRef = useRef<AbortController | null>(null);
+  const [phase, setPhase] = useState<Phase>('loading');
+  const [progress, setProgress] = useState<EnrollProgress | null>(null);
+  const [result, setResult] = useState<EnrollmentResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [cameraError, setCameraError] = useState<string | null>(null);
-  const [isEnrolling, setIsEnrolling] = useState(false);
-  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
-  const startCamera = async () => {
-    setIsCameraStarting(true);
+  const stopCamera = useCallback(() => {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+    if (videoRef.current) videoRef.current.srcObject = null;
+  }, []);
+
+  const startCamera = useCallback(async () => {
     setCameraError(null);
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
+      stopCamera();
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+        video: { facingMode: 'user', width: { ideal: 1280 }, height: { ideal: 720 } },
         audio: false,
       });
       streamRef.current = stream;
@@ -40,130 +62,95 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({ isOpen
         videoRef.current.srcObject = stream;
         await videoRef.current.play();
       }
-    } catch (err: any) {
-      console.warn('Camera access issue:', err);
-      setCameraError('Camera access unavailable. You can upload a photo instead.');
-    } finally {
-      setIsCameraStarting(false);
+    } catch {
+      setCameraError(
+        window.isSecureContext
+          ? 'Camera unavailable or permission denied. Allow camera access and try again.'
+          : 'The camera only works over HTTPS or on localhost. Open the portal over HTTPS to enroll.'
+      );
     }
-  };
-
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-  };
+  }, [stopCamera]);
 
   useEffect(() => {
-    if (isOpen) {
-      // Always reset captured photo on open to launch live camera directly
-      setCapturedPhoto(null);
-      setExtractedDescriptor(null);
-      setSuccessMessage(null);
-      startCamera();
-    } else {
+    if (!isOpen) return;
+    let cancelled = false;
+    setPhase('loading');
+    setResult(null);
+    setError(null);
+    setProgress(null);
+    (async () => {
+      try {
+        await Promise.all([loadFaceModels().then(() => warmUpFaceModels()), startCamera()]);
+      } catch (err) {
+        if (!cancelled) setError(errorMessage(err));
+      }
+      if (!cancelled) setPhase('ready');
+    })();
+    return () => {
+      cancelled = true;
+      abortRef.current?.abort();
       stopCamera();
-    }
-    return () => stopCamera();
-  }, [isOpen, currentStudent]);
+    };
+  }, [isOpen, startCamera, stopCamera]);
 
-  // Ensure stream re-attaches to video ref if remounted (e.g. after clicking Retake)
+  // The <video> is unmounted while reviewing; re-attach the stream when it comes back.
   useEffect(() => {
-    if (isOpen && !capturedPhoto && streamRef.current && videoRef.current) {
-      if (videoRef.current.srcObject !== streamRef.current) {
-        videoRef.current.srcObject = streamRef.current;
-        videoRef.current.play().catch(console.warn);
-      }
+    const video = videoRef.current;
+    if (isOpen && (phase === 'ready' || phase === 'capturing') && video && streamRef.current && video.srcObject !== streamRef.current) {
+      video.srcObject = streamRef.current;
+      video.play().catch(() => undefined);
     }
-  }, [isOpen, capturedPhoto]);
+  }, [isOpen, phase]);
 
-  if (!isOpen || !currentStudent) return null;
+  if (!isOpen || !target) return null;
 
-  const captureSnapshot = async () => {
-    if (!videoRef.current) return;
-    const canvas = document.createElement('canvas');
-    canvas.width = 360;
-    canvas.height = 360;
-    const ctx = canvas.getContext('2d');
-    if (!ctx) return;
-
-    // Draw square cropped snapshot of the center
-    const vW = videoRef.current.videoWidth || 640;
-    const vH = videoRef.current.videoHeight || 480;
-    const size = Math.min(vW, vH);
-    const startX = (vW - size) / 2;
-    const startY = (vH - size) / 2;
-
-    ctx.drawImage(videoRef.current, startX, startY, size, size, 0, 0, 360, 360);
-    const dataUrl = canvas.toDataURL('image/jpeg', 0.9);
-    setCapturedPhoto(dataUrl);
-
-    // Fast asynchronous biometric extraction (<50ms)
+  const handleCapture = async () => {
+    const video = videoRef.current;
+    if (!video) return;
+    setError(null);
+    setPhase('capturing');
+    abortRef.current = new AbortController();
     try {
-      const desc = await extractFaceDescriptorFromImage(canvas);
-      if (desc) setExtractedDescriptor(desc);
-    } catch (e) {
-      console.warn('Snapshot descriptor extraction note:', e);
+      const res = await captureLivenessEnrollment(video, setProgress, abortRef.current.signal);
+      setResult(res);
+      setPhase('review');
+    } catch (err) {
+      setError(errorMessage(err));
+      setPhase('ready');
     }
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onload = async (event) => {
-        if (event.target?.result) {
-          const photoUrl = event.target.result as string;
-          setCapturedPhoto(photoUrl);
-          const img = new Image();
-          img.src = photoUrl;
-          img.onload = async () => {
-            const desc = await extractFaceDescriptorFromImage(img);
-            if (desc) setExtractedDescriptor(desc);
-          };
-        }
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  const handleSaveEnrollment = async () => {
-    if (!capturedPhoto) return;
-    setIsEnrolling(true);
-
+  const handleSave = async () => {
+    if (!result) return;
+    setPhase('saving');
+    setError(null);
     try {
-      let descriptor = extractedDescriptor;
-
-      if (!descriptor && videoRef.current && videoRef.current.readyState >= 2) {
-        descriptor = await extractFaceDescriptorFromImage(videoRef.current);
-      }
-
-      if (!descriptor && capturedPhoto) {
-        const img = new Image();
-        img.src = capturedPhoto;
-        await new Promise((res) => { img.onload = res; });
-        descriptor = await extractFaceDescriptorFromImage(img);
-      }
-
-      registerStudentFace(currentStudent.id, capturedPhoto, descriptor || undefined);
-      setIsEnrolling(false);
-      setSuccessMessage('Biometric facial profile registered successfully!');
+      await registerStudentFace(target.id, result.frames, result.photo);
+      stopCamera();
+      setPhase('done');
+      onEnrolled?.();
       confetti({ particleCount: 50, spread: 60, origin: { y: 0.6 } });
     } catch (err) {
-      console.warn('Face enrollment error:', err);
-      setIsEnrolling(false);
+      setError(errorMessage(err));
+      setPhase('review');
     }
   };
 
+  const retake = () => {
+    setResult(null);
+    setProgress(null);
+    setPhase('ready');
+    if (!streamRef.current) void startCamera();
+  };
+
+  const busy = phase === 'loading' || phase === 'capturing' || phase === 'saving';
+  const stepIndex = progress ? STEP_LABELS.findIndex((s) => s.key === progress.step) : -1;
+  const turning = progress?.step === 'turn-first' || progress?.step === 'turn-second';
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" style={{ maxWidth: 480 }} onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
+    <div className="modal-overlay" onClick={busy ? undefined : onClose} style={{ zIndex: 300 }}>
+      <div className="modal-content" style={{ maxWidth: 500 }} onClick={(e) => e.stopPropagation()}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
             <div
               style={{
@@ -181,36 +168,25 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({ isOpen
             </div>
             <div>
               <div style={{ fontWeight: 700, fontSize: '0.9375rem', color: 'var(--text-heading)' }}>
-                Facial Biometrics Enrollment
+                {forSomeoneElse ? `Enroll ${target.name}'s face` : 'Face Enrollment'}
               </div>
               <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                {currentStudent.name} (Roll: {currentStudent.roll_number})
+                {target.name} · {target.enrollment_number}
               </div>
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={onClose}>
+          <button className="btn btn-ghost btn-sm" onClick={onClose} disabled={busy} aria-label="Close">
             <X size={18} />
           </button>
         </div>
 
-        {/* Success Alert */}
-        {successMessage ? (
-          <div
-            className="alert alert-success"
-            style={{
-              flexDirection: 'column',
-              alignItems: 'center',
-              textAlign: 'center',
-              padding: '1.5rem',
-              marginBottom: '1rem',
-            }}
-          >
+        {phase === 'done' ? (
+          <div className="alert alert-success" style={{ flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '1.5rem' }}>
             <CheckCircle2 size={44} style={{ color: 'var(--green)', marginBottom: '0.75rem' }} />
-            <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '0.375rem' }}>
-              Face Profile Active
-            </div>
+            <div style={{ fontWeight: 700, fontSize: '1rem', marginBottom: '0.375rem' }}>Face profile saved</div>
             <p style={{ fontSize: '0.8125rem', opacity: 0.9 }}>
-              You will now be automatically recognized by faculty classroom cameras during attendance.
+              {forSomeoneElse ? `${target.name} can now be recognised` : 'You can now be recognised'} by classroom
+              cameras. In class, glance at the camera and turn your head a little when your teacher asks.
             </p>
             <button className="btn btn-primary btn-sm" style={{ marginTop: '1rem' }} onClick={onClose}>
               Done
@@ -218,10 +194,43 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({ isOpen
           </div>
         ) : (
           <>
-            {/* Camera Viewfinder & Snap */}
+            {target.face_registered && phase !== 'review' && phase !== 'saving' && (
+              <div className="alert alert-info" style={{ fontSize: '0.75rem', padding: '0.5rem 0.75rem', marginBottom: '0.75rem' }}>
+                <Info size={14} style={{ flexShrink: 0 }} />
+                <span>A face profile already exists. Enrolling again replaces it.</span>
+              </div>
+            )}
+
+            {/* Step indicator */}
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 6, marginBottom: '0.625rem' }}>
+              {STEP_LABELS.map((s, i) => {
+                const done = phase === 'review' || phase === 'saving' || i < stepIndex;
+                const active = phase === 'capturing' && i === stepIndex;
+                return (
+                  <div key={i} style={{ textAlign: 'center' }}>
+                    <div
+                      style={{
+                        height: 5,
+                        borderRadius: 3,
+                        background: done ? '#22c55e' : active ? '#93c5fd' : 'var(--gray-200, #e5e7eb)',
+                        overflow: 'hidden',
+                      }}
+                    >
+                      {active && (
+                        <div style={{ width: `${Math.round((progress?.progress ?? 0) * 100)}%`, height: '100%', background: '#2563eb', transition: 'width 0.15s' }} />
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.6875rem', marginTop: 3, color: active ? 'var(--text-heading)' : 'var(--text-muted)', fontWeight: active ? 700 : 500 }}>
+                      {s.label}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
             <div
               style={{
-                height: 250,
+                height: 280,
                 background: '#090d16',
                 borderRadius: 'var(--radius-md)',
                 overflow: 'hidden',
@@ -229,35 +238,18 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({ isOpen
                 display: 'flex',
                 alignItems: 'center',
                 justifyContent: 'center',
-                marginBottom: '1rem',
+                marginBottom: '0.75rem',
                 border: '1px solid var(--border)',
               }}
             >
-              {capturedPhoto ? (
-                <div style={{ width: '100%', height: '100%', position: 'relative' }}>
+              {phase === 'review' || phase === 'saving' ? (
+                result && (
                   <img
-                    src={capturedPhoto}
-                    alt="Captured face preview"
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    src={result.photo}
+                    alt="Captured face"
+                    style={{ width: 200, height: 200, borderRadius: '50%', objectFit: 'cover', border: '3px solid #22c55e' }}
                   />
-                  <button
-                    className="btn btn-secondary btn-sm"
-                    style={{
-                      position: 'absolute',
-                      bottom: 12,
-                      right: 12,
-                      background: 'rgba(0, 0, 0, 0.7)',
-                      color: '#ffffff',
-                      backdropFilter: 'blur(4px)',
-                    }}
-                    onClick={() => {
-                      setCapturedPhoto(null);
-                      startCamera();
-                    }}
-                  >
-                    <RefreshCw size={13} style={{ marginRight: 4 }} /> Retake
-                  </button>
-                </div>
+                )
               ) : (
                 <>
                   <video
@@ -265,75 +257,79 @@ export const FaceEnrollmentModal: React.FC<FaceEnrollmentModalProps> = ({ isOpen
                     autoPlay
                     playsInline
                     muted
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                    style={{ width: '100%', height: '100%', objectFit: 'cover', transform: 'scaleX(-1)' }}
                   />
-                  {/* Face Framing Oval Guide */}
                   <div
                     style={{
                       position: 'absolute',
-                      width: 150,
-                      height: 190,
+                      width: 165,
+                      height: 210,
                       borderRadius: '50%',
-                      border: '2px dashed #38bdf8',
+                      border: `3px ${phase === 'capturing' ? 'solid' : 'dashed'} ${phase === 'capturing' ? '#22c55e' : '#38bdf8'}`,
                       boxShadow: '0 0 0 9999px rgba(0, 0, 0, 0.45)',
                       pointerEvents: 'none',
                     }}
                   />
-                  <div
-                    style={{
-                      position: 'absolute',
-                      bottom: 10,
-                      color: '#ffffff',
-                      fontSize: '0.75rem',
-                      fontWeight: 600,
-                      background: 'rgba(0, 0, 0, 0.6)',
-                      padding: '2px 10px',
-                      borderRadius: '12px',
-                    }}
-                  >
-                    Center face within oval
-                  </div>
+                  {turning && (
+                    <ArrowLeftRight size={40} color="#fff" style={{ position: 'absolute', top: 14, opacity: 0.9 }} />
+                  )}
+                  {cameraError && (
+                    <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '1.5rem', textAlign: 'center', color: '#e2e8f0', fontSize: '0.8125rem', background: '#090d16' }}>
+                      {cameraError}
+                    </div>
+                  )}
                 </>
+              )}
+              {!cameraError && (
+                <div style={{ position: 'absolute', bottom: 10, left: 10, right: 10, textAlign: 'center', color: '#fff', fontSize: '0.8125rem', fontWeight: 700 }}>
+                  <span style={{ background: 'rgba(0, 0, 0, 0.65)', padding: '4px 12px', borderRadius: 12 }}>
+                    {phase === 'loading'
+                      ? 'Loading face models…'
+                      : phase === 'capturing'
+                        ? progress?.hint ?? 'Starting…'
+                        : phase === 'review' || phase === 'saving'
+                          ? 'Capture complete'
+                          : 'Press Start, then follow the prompts'}
+                  </span>
+                </div>
               )}
             </div>
 
-            {/* Snapshot Controls */}
-            {!capturedPhoto && (
-              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1rem' }}>
-                <button className="btn btn-primary" style={{ flex: 1 }} onClick={captureSnapshot}>
-                  <Camera size={15} /> Capture Photo
-                </button>
-                <label className="btn btn-secondary" style={{ cursor: 'pointer' }}>
-                  <Upload size={15} /> Upload
-                  <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFileUpload} />
-                </label>
+            {error && (
+              <div className="alert alert-danger" style={{ fontSize: '0.8125rem', padding: '0.625rem 0.75rem', marginBottom: '0.75rem' }}>
+                <AlertCircle size={14} style={{ flexShrink: 0 }} />
+                <span>{error}</span>
               </div>
             )}
 
-            {/* Privacy & Anti-Spoofing Notice */}
-            <div
-              className="alert alert-info"
-              style={{ fontSize: '0.75rem', padding: '0.625rem 0.875rem', marginBottom: '1.25rem' }}
-            >
-              <Sparkles size={14} style={{ flexShrink: 0 }} />
+            <div className="alert alert-info" style={{ fontSize: '0.75rem', padding: '0.625rem 0.875rem', marginBottom: '1rem' }}>
+              <Info size={14} style={{ flexShrink: 0 }} />
               <span>
-                Biometric vector features are securely hashed locally. Photos are exclusively used for classroom auto-attendance verification.
+                You'll look straight at the camera, slowly turn your head to each side, then look straight again (about 10
+                seconds). The head turn proves it's a real person, not a photo. Only numeric face signatures and a small
+                thumbnail are stored, on the college server.
               </span>
             </div>
 
-            {/* Footer Buttons */}
-            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem' }}>
-              <button className="btn btn-secondary" onClick={onClose}>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.5rem', flexWrap: 'wrap' }}>
+              {(phase === 'review' || phase === 'saving') && (
+                <button className="btn btn-secondary" onClick={retake} disabled={phase === 'saving'}>
+                  <RefreshCw size={14} /> Retake
+                </button>
+              )}
+              <button className="btn btn-secondary" onClick={onClose} disabled={busy}>
                 Cancel
               </button>
-              <button
-                className="btn btn-primary"
-                disabled={!capturedPhoto || isEnrolling}
-                onClick={handleSaveEnrollment}
-              >
-                <UserCheck size={14} />
-                {isEnrolling ? 'Hashing Features…' : 'Enroll Face Profile'}
-              </button>
+              {phase === 'review' || phase === 'saving' ? (
+                <button className="btn btn-primary" disabled={phase !== 'review'} onClick={handleSave}>
+                  <UserCheck size={14} />
+                  {phase === 'saving' ? 'Verifying…' : 'Save face profile'}
+                </button>
+              ) : (
+                <button className="btn btn-primary" onClick={handleCapture} disabled={phase !== 'ready' || !!cameraError}>
+                  <Camera size={14} /> {phase === 'capturing' ? 'Capturing…' : 'Start'}
+                </button>
+              )}
             </div>
           </>
         )}

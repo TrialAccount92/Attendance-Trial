@@ -1,4 +1,5 @@
 import { Student, AttendanceRecord } from '../types';
+import { localDateString } from './date';
 
 /**
  * Export generic data array to CSV file and trigger download in browser
@@ -21,7 +22,7 @@ export function exportToCSV(filename: string, headers: string[], rows: (string |
   const url = URL.createObjectURL(blob);
   const link = document.createElement('a');
   link.setAttribute('href', url);
-  link.setAttribute('download', `${filename.replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
+  link.setAttribute('download', `${filename.replace(/\s+/g, '_')}_${localDateString()}.csv`);
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import { X, UserPlus, GraduationCap, CheckCircle2, AlertCircle } from 'lucide-react';
+import { IssuedCredentials, Credential } from '../common/IssuedCredentials';
+import { errorMessage } from '../../api/client';
 
 interface AddStudentModalProps {
   isOpen: boolean;
@@ -22,19 +24,12 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
   const [departmentId, setDepartmentId] = useState('dept-ce');
   const [semester, setSemester] = useState<number>(3);
   const [division, setDivision] = useState('A');
-  const [seedAttendance, setSeedAttendance] = useState(true);
+  const [issued, setIssued] = useState<Credential | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Auto-suggest enrollment and email when roll and name change
-  useEffect(() => {
-    if (rollNumber.trim() && !enrollmentNumber) {
-      const paddedRoll = rollNumber.trim().padStart(2, '0');
-      setEnrollmentNumber(`EN2024${paddedRoll}`);
-    }
-  }, [rollNumber]);
-
+  // Suggest a college email from the name (the enrollment number is generated server-side if left blank).
   useEffect(() => {
     if (name.trim() && !email) {
       const cleanName = name.trim().toLowerCase().replace(/\s+/g, '.');
@@ -44,12 +39,39 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
 
   if (!isOpen) return null;
 
+  const close = () => {
+    setIssued(null);
+    setError(null);
+    onClose();
+  };
+
+  if (issued) {
+    return (
+      <div className="modal-overlay" onClick={close}>
+        <div className="modal-box" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+          <div className="modal-head">
+            <h2 style={{ fontSize: '1.0625rem', margin: 0, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 8 }}>
+              <CheckCircle2 size={18} color="var(--green-600)" /> {issued.name} registered
+            </h2>
+          </div>
+          <div className="modal-body">
+            <IssuedCredentials credentials={[issued]} />
+          </div>
+          <div className="modal-foot">
+            <button className="btn btn-secondary" onClick={() => setIssued(null)}>Add another</button>
+            <button className="btn btn-primary" onClick={close}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   // Matching classes for this cohort
   const matchingClasses = classes.filter(
     (c) => c.semester === semester && c.division === division
   );
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -81,7 +103,7 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
     setIsSubmitting(true);
 
     try {
-      const newStu = addStudent({
+      const { student, tempPassword } = await addStudent({
         name: cleanName,
         roll_number: cleanRoll,
         enrollment_number: enrollmentNumber.trim() || undefined,
@@ -89,25 +111,23 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
         department_id: departmentId,
         semester,
         division,
-        seedAttendance,
       });
 
       setIsSubmitting(false);
-      // Reset form
       setName('');
       setRollNumber('');
       setEnrollmentNumber('');
       setEmail('');
-      if (onSuccess) onSuccess(newStu.name);
-      onClose();
-    } catch (err: any) {
+      setIssued({ name: student.name, loginId: student.enrollment_number, password: tempPassword });
+      if (onSuccess) onSuccess(student.name);
+    } catch (err) {
       setIsSubmitting(false);
-      setError(err?.message || 'Failed to register student.');
+      setError(errorMessage(err));
     }
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={close}>
       <div className="modal-box" style={{ maxWidth: 580 }} onClick={(e) => e.stopPropagation()}>
         {/* Head */}
         <div className="modal-head">
@@ -185,7 +205,7 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
                 <input
                   type="text"
                   className="form-input"
-                  placeholder="e.g. EN202426"
+                  placeholder="Leave blank to generate"
                   value={enrollmentNumber}
                   onChange={(e) => setEnrollmentNumber(e.target.value)}
                 />
@@ -289,25 +309,6 @@ export const AddStudentModal: React.FC<AddStudentModalProps> = ({
               </div>
             </div>
 
-            {/* Baseline Attendance Seed Option */}
-            <label
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                fontSize: '0.8125rem',
-                color: 'var(--gray-700)',
-                cursor: 'pointer',
-              }}
-            >
-              <input
-                type="checkbox"
-                checked={seedAttendance}
-                onChange={(e) => setSeedAttendance(e.target.checked)}
-                style={{ accentColor: 'var(--blue-600)', width: 16, height: 16 }}
-              />
-              <span>Generate realistic past attendance history (~80% baseline) for registered classes</span>
-            </label>
           </div>
 
           {/* Modal Footer */}

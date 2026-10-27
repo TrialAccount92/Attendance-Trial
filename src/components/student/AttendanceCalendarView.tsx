@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { AttendanceRecord, CollegeClass, Subject } from '../../types';
-import { ChevronLeft, ChevronRight, CheckCircle2, XCircle, Clock, AlertCircle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Clock } from 'lucide-react';
 import { Badge } from '../common/Badge';
 
 interface AttendanceCalendarViewProps {
@@ -49,7 +49,7 @@ export const AttendanceCalendarView: React.FC<AttendanceCalendarViewProps> = ({
   // Map records by date string: "YYYY-MM-DD"
   const recordsByDate: Record<string, AttendanceRecord[]> = {};
   records.forEach((r) => {
-    const dStr = r.marked_at.split('T')[0];
+    const dStr = (r.lecture_at ?? r.marked_at).slice(0, 10);
     if (!recordsByDate[dStr]) recordsByDate[dStr] = [];
     recordsByDate[dStr].push(r);
   });

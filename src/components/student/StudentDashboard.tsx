@@ -3,7 +3,7 @@ import { useAttendance } from '../../context/AttendanceContext';
 import {
   AlertTriangle, Calendar, Clock, MapPin,
   TrendingUp, FileSpreadsheet, HelpCircle, CheckCircle2,
-  BookOpen, User as UserIcon, FileText, Award, ShieldCheck, X, Scan,
+  BookOpen, User as UserIcon, FileText, Award, X, Scan,
   QrCode,
 } from 'lucide-react';
 import { CircularProgress, ProgressBar } from '../common/ProgressBar';
@@ -31,6 +31,7 @@ export const StudentDashboard: React.FC = () => {
     minAttendanceThreshold,
     academicEvents,
     extraClasses,
+    getStudentEnrolledClassIds,
   } = useAttendance();
 
   const [isQRScannerOpen, setIsQRScannerOpen] = useState(false);
@@ -53,6 +54,7 @@ export const StudentDashboard: React.FC = () => {
   }
 
   const { subjectStats, overall } = getStudentStats(currentStudent.id);
+  const myClassIds = new Set(getStudentEnrolledClassIds(currentStudent.id));
 
   const studentRecords = records
     .filter((r) => r.student_id === currentStudent.id)
@@ -69,7 +71,7 @@ export const StudentDashboard: React.FC = () => {
         <div className="page-header-left">
           <h1>Hi, {currentStudent.name.split(' ')[0]} 👋</h1>
           <p>
-            Roll {currentStudent.roll_number} · Semester {currentStudent.semester} · Division {currentStudent.division} · Department of Computer Engineering
+            Roll {currentStudent.roll_number} · Semester {currentStudent.semester} · Division {currentStudent.division} · {currentStudent.enrollment_number}
           </p>
         </div>
         <div className="page-header-actions" style={{ flexWrap: 'wrap' }}>
@@ -100,7 +102,7 @@ export const StudentDashboard: React.FC = () => {
             onClick={() => setIsFaceEnrollOpen(true)}
           >
             <Scan size={14} />
-            {currentStudent.face_registered ? 'Face Biometrics: Enrolled ✓' : 'Register Face Biometrics'}
+            {currentStudent.face_registered ? 'Face enrolled ✓ (re-enroll)' : 'Enroll your face'}
           </button>
           <button className="btn btn-secondary" onClick={() => setIsCalendarOpen(true)}>
             <Calendar size={14} /> Academic Calendar
@@ -193,10 +195,7 @@ export const StudentDashboard: React.FC = () => {
       )}
 
       {/* Scheduled Extra Classes Notification for this Student */}
-      {extraClasses.some((ex) => {
-        const cls = classes.find((c) => c.id === ex.class_id);
-        return cls?.semester === currentStudent.semester && cls?.division === currentStudent.division;
-      }) && (
+      {extraClasses.some((ex) => myClassIds.has(ex.class_id)) && (
         <div
           style={{
             display: 'flex',
@@ -230,7 +229,7 @@ export const StudentDashboard: React.FC = () => {
         <div className="alert alert-danger" style={{ marginBottom: '1.25rem' }}>
           <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 1 }} />
           <div>
-            <strong>Attendance below 75% — exam eligibility at risk.</strong>{' '}
+            <strong>Attendance below {Math.round(minAttendanceThreshold * 100)}% — exam eligibility at risk.</strong>{' '}
             Attend the next <strong>{overall.required_attend}</strong> consecutive classes to meet the mandatory threshold.
           </div>
         </div>
@@ -799,7 +798,7 @@ export const StudentDashboard: React.FC = () => {
                 studentRecords.map((rec) => {
                   const cls = classes.find((c) => c.id === rec.class_id);
                   const sub = subjects.find((s) => s.id === cls?.subject_id);
-                  const d = new Date(rec.marked_at);
+                  const d = new Date(rec.lecture_at ?? rec.marked_at);
 
                   return (
                     <tr key={rec.id}>

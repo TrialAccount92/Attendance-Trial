@@ -37,9 +37,10 @@ export function calculateAttendanceMetrics(
   const percentage = Math.round(rawPercentage * 10) / 10;
   const absent = Math.max(0, totalConducted - present);
 
-  if (rawPercentage >= threshold * 100) {
-    // Formula: floor((present - threshold * total) / threshold)
-    const safeMisses = Math.floor((present - threshold * totalConducted) / threshold);
+  if (present >= threshold * totalConducted - 1e-9) {
+    // Largest k with present / (total + k) >= threshold  →  k = floor(present / threshold - total).
+    // The small epsilon stops float error (e.g. 24 / 0.8 = 29.999…) from losing a class.
+    const safeMisses = Math.floor(present / threshold - totalConducted + 1e-9);
     return {
       conducted: totalConducted,
       present,
@@ -51,14 +52,12 @@ export function calculateAttendanceMetrics(
       isLowAttendance: false,
       message:
         safeMisses > 0
-          ? `You can safely miss ${safeMisses} more ${safeMisses === 1 ? 'class' : 'classes'} and stay above ${threshold * 100}%.`
-          : `You are right on track at ${percentage}%. Do not miss any upcoming classes to stay above ${threshold * 100}%.`,
+          ? `You can safely miss ${safeMisses} more ${safeMisses === 1 ? 'class' : 'classes'} and stay at or above ${Math.round(threshold * 100)}%.`
+          : `You are right on track at ${percentage}%. Do not miss any upcoming classes to stay at or above ${Math.round(threshold * 100)}%.`,
     };
   } else {
-    // Formula: ceil((threshold * total - present) / (1 - threshold))
-    const requiredAttend = Math.ceil(
-      (threshold * totalConducted - present) / (1 - threshold)
-    );
+    // Smallest k with (present + k) / (total + k) >= threshold.
+    const requiredAttend = Math.ceil((threshold * totalConducted - present) / (1 - threshold) - 1e-9);
     return {
       conducted: totalConducted,
       present,
@@ -70,7 +69,7 @@ export function calculateAttendanceMetrics(
       isLowAttendance: true,
       message: `You need to attend the next ${requiredAttend} consecutive ${
         requiredAttend === 1 ? 'class' : 'classes'
-      } without missing to reach ${threshold * 100}%.`,
+      } without missing to reach ${Math.round(threshold * 100)}%.`,
     };
   }
 }

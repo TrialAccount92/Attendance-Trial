@@ -13,8 +13,9 @@ export interface User {
   name: string;
   email: string;
   role: UserRole;
-  avatar?: string;
+  avatar?: string | null;
   created_at: string;
+  must_change_password?: boolean;
 }
 
 export interface Department {
@@ -29,18 +30,31 @@ export interface Subject {
   code: string;
   credits: number;
   department_id: string;
-  semester?: number;
+  semester?: number | null;
 }
 
+/** Public part of a student's face profile. The 128-D embeddings never leave the server. */
 export interface FaceBiometricProfile {
   student_id: string;
   enrolled_at: string;
   photo_url: string;
-  descriptor?: number[]; // normalized facial embedding vector
-  face_features?: {
-    eye_distance_ratio: number;
-    face_aspect_ratio: number;
-  };
+  sample_count: number;
+}
+
+/** One camera frame of one face, as sent to the server for matching and liveness. */
+export interface FaceFrame {
+  t: number; // ms since capture start (strictly increasing)
+  p: number[][]; // 68 landmarks [x, y]
+  d?: number[]; // 128-D descriptor, front-facing frames only
+}
+
+/** Server's answer for one face sent to /identify. */
+export interface FaceIdentity {
+  student_id: string;
+  name: string;
+  roll_number: string;
+  distance: number;
+  confidence: number;
 }
 
 export interface Student {
@@ -53,9 +67,9 @@ export interface Student {
   department_id: string;
   semester: number;
   division: string;
-  avatar?: string;
+  avatar?: string | null;
   face_registered?: boolean;
-  face_photo?: string;
+  face_photo?: string | null;
   face_profile?: FaceBiometricProfile;
 }
 
@@ -70,7 +84,10 @@ export interface DetectedFace {
     width: number;
     height: number;
   };
+  /** Match confidence 0-1 (1 - euclidean distance to the closest enrolled sample). */
   confidence: number;
+  /** face-api detection score 0-1. */
+  detection_score: number;
   distance_meters: number;
   recommended_zoom: number;
   status: 'TRACKING' | 'VERIFIED' | 'UNENROLLED';
@@ -105,7 +122,7 @@ export interface Faculty {
   department_id: string;
   employee_id: string;
   designation: string;
-  avatar?: string;
+  avatar?: string | null;
 }
 
 export interface CollegeClass {
@@ -130,13 +147,24 @@ export interface AttendanceSession {
   class_id: string;
   faculty_id: string;
   start_time: string;
-  end_time?: string;
+  end_time?: string | null;
   status: SessionStatus;
+  /** Always empty in shared state: the live QR comes from getSessionQR(). */
   qr_token: string;
   token_generated_at: number; // timestamp ms
   expires_at: number; // timestamp ms
-  token_refresh_interval_sec: number; // default 30
-  topic?: string;
+  token_refresh_interval_sec: number;
+  topic?: string | null;
+  mode?: 'QR' | 'FACE' | 'MANUAL';
+  require_location?: boolean;
+}
+
+/** The QR currently shown for a live session (rotates every interval_sec). */
+export interface SessionQR {
+  payload: string;
+  generated_at: number;
+  expires_at: number;
+  interval_sec: number;
 }
 
 export type LeaveType = 'MEDICAL' | 'ON_DUTY_EVENT' | 'SPORTS' | 'PERSONAL';
@@ -150,11 +178,10 @@ export interface LeaveApplication {
   start_date: string;
   end_date: string;
   reason: string;
-  document_name?: string;
+  document_name?: string | null;
   status: RequestStatus; // 'PENDING' | 'APPROVED' | 'REJECTED'
-  faculty_comment?: string;
+  faculty_comment?: string | null;
   applied_at: string;
-  affected_class_ids?: string[];
 }
 
 export interface AttendanceRecord {
@@ -165,6 +192,12 @@ export interface AttendanceRecord {
   status: AttendanceStatus;
   marked_at: string;
   method: AttendanceMethod;
+  confidence?: number | null;
+  /** Start time of the lecture this record belongs to (from the server). */
+  lecture_at?: string;
+  /** Face marks only: matched distance and the liveness evidence, e.g. "head-turn 0.42". */
+  face_distance?: number | null;
+  liveness?: string | null;
 }
 
 export interface CorrectionRequest {
@@ -172,13 +205,13 @@ export interface CorrectionRequest {
   student_id: string;
   student_name: string;
   roll_number: string;
-  session_id?: string;
+  session_id?: string | null;
   class_id: string;
   subject_name: string;
   date: string;
   reason: string;
   status: RequestStatus;
-  faculty_comment?: string;
+  faculty_comment?: string | null;
   created_at: string;
 }
 
@@ -221,7 +254,7 @@ export type AcademicEventType = 'HOLIDAY' | 'EXAM_WEEK' | 'FESTIVAL' | 'VACATION
 export interface AcademicEvent {
   id: string;
   title: string;
-  description?: string;
+  description?: string | null;
   start_date: string; // YYYY-MM-DD
   end_date: string;   // YYYY-MM-DD
   type: AcademicEventType;

@@ -1,6 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import { X, UserPlus, AlertCircle } from 'lucide-react';
+import { IssuedCredentials, Credential } from '../common/IssuedCredentials';
+import { errorMessage } from '../../api/client';
 
 interface AddFacultyModalProps {
   isOpen: boolean;
@@ -30,6 +32,7 @@ export const AddFacultyModal: React.FC<AddFacultyModalProps> = ({
   const [designation, setDesignation] = useState('Assistant Professor');
   const [departmentId, setDepartmentId] = useState('dept-ce');
   const [error, setError] = useState<string | null>(null);
+  const [issued, setIssued] = useState<Credential | null>(null);
 
   // Auto-generate employee ID and email based on name
   useEffect(() => {
@@ -40,14 +43,14 @@ export const AddFacultyModal: React.FC<AddFacultyModalProps> = ({
       }
       if (!employeeId) {
         const nextNum = 100 + facultyList.length + 1;
-        setEmployeeId(`EMP${nextNum}`);
+        setEmployeeId(`EMP-${nextNum}`);
       }
     }
   }, [name, facultyList.length]);
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -78,7 +81,7 @@ export const AddFacultyModal: React.FC<AddFacultyModalProps> = ({
     }
 
     try {
-      const newFac = addFaculty({
+      const { faculty, tempPassword } = await addFaculty({
         name: cleanName,
         email: cleanEmail,
         employee_id: cleanEmpId,
@@ -86,20 +89,39 @@ export const AddFacultyModal: React.FC<AddFacultyModalProps> = ({
         department_id: departmentId,
       });
 
-      // Reset
       setName('');
       setEmail('');
       setEmployeeId('');
       setDesignation('Assistant Professor');
-      if (onSuccess) onSuccess(newFac.name);
-      onClose();
-    } catch (err: any) {
-      setError(err?.message || 'Failed to register faculty member.');
+      setIssued({ name: faculty.name, loginId: faculty.employee_id, password: tempPassword });
+      if (onSuccess) onSuccess(faculty.name);
+    } catch (err) {
+      setError(errorMessage(err));
     }
   };
 
+  const close = () => {
+    setIssued(null);
+    setError(null);
+    onClose();
+  };
+
+  if (issued) {
+    return (
+      <div className="modal-overlay" onClick={close}>
+        <div className="modal-content" style={{ maxWidth: 520 }} onClick={(e) => e.stopPropagation()}>
+          <div style={{ fontWeight: 800, fontSize: '1.0625rem', marginBottom: '1rem' }}>{issued.name} added</div>
+          <IssuedCredentials credentials={[issued]} />
+          <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '1rem' }}>
+            <button className="btn btn-primary" onClick={close}>Done</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={close}>
       <div
         className="modal-content"
         style={{ maxWidth: 540 }}

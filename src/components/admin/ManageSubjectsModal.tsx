@@ -58,7 +58,7 @@ export const ManageSubjectsModal: React.FC<ManageSubjectsModalProps> = ({
     setFormError(null);
   };
 
-  const handleSave = (e: React.FormEvent) => {
+  const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
     setFormError(null);
 
@@ -75,7 +75,7 @@ export const ManageSubjectsModal: React.FC<ManageSubjectsModalProps> = ({
     }
 
     if (editingSubject) {
-      updateSubject(editingSubject.id, {
+      await updateSubject(editingSubject.id, {
         name: cleanName,
         code: cleanCode,
         credits: Number(credits),
@@ -85,7 +85,7 @@ export const ManageSubjectsModal: React.FC<ManageSubjectsModalProps> = ({
       onSuccess?.(`Subject "${cleanName}" updated successfully.`);
       setEditingSubject(null);
     } else if (isAddingNew) {
-      addSubject({
+      await addSubject({
         name: cleanName,
         code: cleanCode,
         credits: Number(credits),
@@ -97,14 +97,14 @@ export const ManageSubjectsModal: React.FC<ManageSubjectsModalProps> = ({
     }
   };
 
-  const handleDelete = (subj: Subject) => {
+  const handleDelete = async (subj: Subject) => {
     const classCount = classes.filter((c) => c.subject_id === subj.id).length;
     let message = `Are you sure you want to remove ${subj.name} (${subj.code}) from the curriculum?`;
     if (classCount > 0) {
       message += `\n\nWarning: There are currently ${classCount} class slot(s) scheduled for this subject.`;
     }
     if (window.confirm(message)) {
-      removeSubject(subj.id);
+      await removeSubject(subj.id);
       onSuccess?.(`Subject ${subj.name} removed.`);
       if (editingSubject?.id === subj.id) {
         cancelForm();

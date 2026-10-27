@@ -1,5 +1,4 @@
-import React, { useEffect } from 'react';
-import { useAttendance } from '../context/AttendanceContext';
+import React from 'react';
 import { Navbar } from '../components/layout/Navbar';
 import { StudentDashboard } from '../components/student/StudentDashboard';
 import { AppRoute } from '../utils/router';
@@ -9,13 +8,6 @@ interface StudentPageProps {
 }
 
 export const StudentPage: React.FC<StudentPageProps> = ({ onNavigate }) => {
-  const { currentRole, switchUser } = useAttendance();
-
-  useEffect(() => {
-    if (currentRole !== 'STUDENT') {
-      switchUser('STUDENT', 'usr-stu-1');
-    }
-  }, [currentRole, switchUser]);
 
   return (
     <div className="app-container">

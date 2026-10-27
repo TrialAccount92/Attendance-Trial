@@ -1,5 +1,4 @@
-import React, { useEffect } from 'react';
-import { useAttendance } from '../context/AttendanceContext';
+import React from 'react';
 import { Navbar } from '../components/layout/Navbar';
 import { AdminDashboard } from '../components/admin/AdminDashboard';
 import { AppRoute } from '../utils/router';
@@ -9,13 +8,6 @@ interface AdminPageProps {
 }
 
 export const AdminPage: React.FC<AdminPageProps> = ({ onNavigate }) => {
-  const { currentRole, switchUser } = useAttendance();
-
-  useEffect(() => {
-    if (currentRole !== 'ADMIN') {
-      switchUser('ADMIN', 'usr-admin');
-    }
-  }, [currentRole, switchUser]);
 
   return (
     <div className="app-container">

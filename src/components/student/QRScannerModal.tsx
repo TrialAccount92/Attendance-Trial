@@ -1,10 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
-import {
-  Camera, CheckCircle2, AlertTriangle, X, ShieldAlert, Sparkles,
-  RefreshCw, Video, VideoOff, Play, ShieldCheck, Clock
-} from 'lucide-react';
+import { Camera, CheckCircle2, AlertTriangle, X, ShieldAlert, Upload, MapPin, Loader2 } from 'lucide-react';
 import confetti from 'canvas-confetti';
+import type { Html5Qrcode } from 'html5-qrcode';
 import { soundEffects } from '../../utils/cameraZoomController';
 
 interface QRScannerModalProps {
@@ -12,490 +10,260 @@ interface QRScannerModalProps {
   onClose: () => void;
 }
 
-export const QRScannerModal: React.FC<QRScannerModalProps> = ({ isOpen, onClose }) => {
-  const {
-    activeSession,
-    classes,
-    subjects,
-    startAttendanceSession,
-    markAttendanceViaQR,
-    getActiveSessionQRPayload,
-    currentStudent,
-    getStudentStats,
-  } = useAttendance();
+const READER_ID = 'attendpulse-qr-reader';
 
-  const [scanResult, setScanResult] = useState<{ success: boolean; message: string; subject?: string } | null>(null);
-  const [qrPayload, setQrPayload] = useState('');
-  const [useCamera, setUseCamera] = useState(false);
-  const [cameraActive, setCameraActive] = useState(false);
-  const [timeLeft, setTimeLeft] = useState(30);
-
-  const videoRef = useRef<HTMLVideoElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-
-  // Sync token payload and rotation countdown
-  useEffect(() => {
-    if (!isOpen || !activeSession) {
-      setQrPayload('');
+function getPosition(): Promise<{ latitude: number; longitude: number }> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error('This device cannot share its location.'));
       return;
     }
+    navigator.geolocation.getCurrentPosition(
+      (p) => resolve({ latitude: p.coords.latitude, longitude: p.coords.longitude }),
+      () => reject(new Error('Location permission is needed for this class. Allow it and scan again.')),
+      { enableHighAccuracy: true, timeout: 15000 }
+    );
+  });
+}
 
-    setQrPayload(getActiveSessionQRPayload());
+export const QRScannerModal: React.FC<QRScannerModalProps> = ({ isOpen, onClose }) => {
+  const { activeSession, classes, subjects, markAttendanceViaQR, currentStudent, getStudentStats } = useAttendance();
 
-    const updateTimer = () => {
-      const remaining = Math.max(0, Math.ceil((activeSession.expires_at - Date.now()) / 1000));
-      setTimeLeft(remaining);
-      setQrPayload(getActiveSessionQRPayload());
-    };
+  const [scanResult, setScanResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [cameraState, setCameraState] = useState<'idle' | 'starting' | 'on' | 'error'>('idle');
+  const [cameraError, setCameraError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const scannerRef = useRef<Html5Qrcode | null>(null);
+  const startingRef = useRef<Promise<unknown> | null>(null);
+  const handlingRef = useRef(false);
 
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [isOpen, activeSession, getActiveSessionQRPayload]);
+  const needsLocation = !!activeSession?.require_location;
 
-  // Start/Stop camera stream
-  const startCamera = async () => {
+  const stopCamera = useCallback(async () => {
+    // Let a camera that is still starting finish first; stopping mid-start leaves it half-open.
+    await startingRef.current?.catch(() => undefined);
+    const scanner = scannerRef.current;
+    scannerRef.current = null;
+    if (scanner) {
+      try {
+        if (scanner.isScanning) await scanner.stop();
+        scanner.clear();
+      } catch {
+        /* already stopped */
+      }
+    }
+    setCameraState('idle');
+  }, []);
+
+  const submit = useCallback(
+    async (payload: string) => {
+      if (handlingRef.current) return;
+      handlingRef.current = true;
+      setSubmitting(true);
+      await stopCamera();
+      try {
+        const coords = needsLocation ? await getPosition() : null;
+        const res = await markAttendanceViaQR(payload, coords);
+        setScanResult(res);
+        if (res.success) {
+          soundEffects.playSuccessChime();
+          confetti({ particleCount: 80, spread: 70, origin: { y: 0.6 } });
+        }
+      } catch (err) {
+        setScanResult({ success: false, message: err instanceof Error ? err.message : 'Could not submit.' });
+      } finally {
+        setSubmitting(false);
+        handlingRef.current = false;
+      }
+    },
+    [markAttendanceViaQR, needsLocation, stopCamera]
+  );
+
+  const startCamera = useCallback(async () => {
+    setCameraError(null);
+    setCameraState('starting');
     try {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-      }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
-        audio: false,
-      });
-      streamRef.current = stream;
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
-      }
-      setCameraActive(true);
-      setUseCamera(true);
-    } catch {
-      setCameraActive(false);
-      setUseCamera(false);
+      const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+      await stopCamera();
+      const scanner = new Html5Qrcode(READER_ID, { formatsToSupport: [Html5QrcodeSupportedFormats.QR_CODE], verbose: false });
+      scannerRef.current = scanner;
+      startingRef.current = scanner.start(
+        { facingMode: 'environment' },
+        {
+          fps: 10,
+          qrbox: (w, h) => {
+            const side = Math.max(120, Math.floor(Math.min(w, h) * 0.7));
+            return { width: side, height: side };
+          },
+        },
+        (text) => void submit(text),
+        () => undefined
+      );
+      await startingRef.current;
+      startingRef.current = null;
+      setCameraState('on');
+    } catch (err) {
+      startingRef.current = null;
+      setCameraState('error');
+      setCameraError(
+        !window.isSecureContext
+          ? 'The camera only works over HTTPS or on localhost. You can upload a photo of the QR code instead.'
+          : `Camera unavailable (${err instanceof Error ? err.message : String(err)}). You can upload a photo of the QR code instead.`
+      );
     }
-  };
+  }, [stopCamera, submit]);
 
-  const stopCamera = () => {
-    if (streamRef.current) {
-      streamRef.current.getTracks().forEach((t) => t.stop());
-      streamRef.current = null;
-    }
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-    setCameraActive(false);
-  };
+  // Keep the camera running whenever the scanner view is showing.
+  useEffect(() => {
+    if (isOpen && !scanResult && !submitting && cameraState === 'idle') void startCamera();
+  }, [isOpen, scanResult, submitting, cameraState, startCamera]);
 
   useEffect(() => {
     if (!isOpen) {
-      stopCamera();
       setScanResult(null);
+      void stopCamera();
     }
-    return () => stopCamera();
-  }, [isOpen]);
+  }, [isOpen, stopCamera]);
+
+  useEffect(() => () => void stopCamera(), [stopCamera]);
+
+  const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    setSubmitting(true);
+    let text: string | null = null;
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode');
+      await stopCamera();
+      const reader = new Html5Qrcode(READER_ID, false);
+      text = await reader.scanFile(file, false);
+      reader.clear();
+    } catch {
+      setScanResult({ success: false, message: 'No QR code found in that image. Try again with a sharper photo.' });
+      setSubmitting(false);
+      return;
+    }
+    await submit(text);
+  };
 
   if (!isOpen) return null;
 
   const targetClass = activeSession ? classes.find((c) => c.id === activeSession.class_id) : null;
   const targetSubject = targetClass ? subjects.find((s) => s.id === targetClass.subject_id) : null;
-  const studentMetrics = currentStudent ? getStudentStats(currentStudent.id).overall : null;
+  const overall = currentStudent ? getStudentStats(currentStudent.id).overall : null;
 
-  const handleScan = (payload: string) => {
-    const res = markAttendanceViaQR(payload);
-    setScanResult(res);
-    if (res.success) {
-      soundEffects.playSuccessChime();
-      confetti({
-        particleCount: 80,
-        spread: 70,
-        origin: { y: 0.6 },
-        colors: ['#2563eb', '#16a34a', '#f59e0b', '#3b82f6'],
-      });
-    }
-  };
-
-  const handleStartDemoSession = () => {
-    if (classes.length > 0) {
-      startAttendanceSession(classes[0].id, 'Live QR Demonstration Lecture');
-    }
-  };
-
-  const handleExpiredTest = () => {
-    const fake = JSON.stringify({
-      sessionId: activeSession?.id ?? 'sess-expired-demo',
-      classId: activeSession?.class_id ?? (classes[0]?.id || 'cls-1'),
-      token: 'AP-OLD-EXPIRED-TOKEN-001',
-      generatedAt: Date.now() - 90_000,
-      expiresAt: Date.now() - 60_000,
-    });
-    handleScan(fake);
+  const close = () => {
+    void stopCamera();
+    onClose();
   };
 
   return (
-    <div className="modal-overlay" onClick={onClose}>
+    <div className="modal-overlay" onClick={close}>
       <div className="modal-content" style={{ maxWidth: 480, overflow: 'hidden' }} onClick={(e) => e.stopPropagation()}>
-        {/* Header */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-            <div
-              style={{
-                width: 36,
-                height: 36,
-                borderRadius: 'var(--r-md)',
-                background: 'var(--blue-50)',
-                color: 'var(--blue-600)',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
+            <div style={{ width: 36, height: 36, borderRadius: 'var(--r-md)', background: 'var(--blue-50)', color: 'var(--blue-600)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
               <Camera size={18} />
             </div>
             <div>
-              <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--gray-900)' }}>
-                Scan Attendance QR Code
-              </div>
-              <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)' }}>
-                Anti-proxy encrypted dynamic QR scanner
-              </div>
+              <div style={{ fontWeight: 800, fontSize: '1rem', color: 'var(--gray-900)' }}>Scan Attendance QR Code</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--gray-500)' }}>Point your camera at the code on the classroom screen</div>
             </div>
           </div>
-          <button className="btn btn-ghost btn-sm" onClick={onClose} aria-label="Close modal">
+          <button className="btn btn-ghost btn-sm" onClick={close} aria-label="Close">
             <X size={18} />
           </button>
         </div>
 
-        {/* Scan Result State */}
         {scanResult ? (
           <div
             className={`alert ${scanResult.success ? 'alert-success' : 'alert-danger'}`}
-            style={{
-              flexDirection: 'column',
-              alignItems: 'center',
-              textAlign: 'center',
-              padding: '1.75rem 1.25rem',
-              marginBottom: '1rem',
-              borderRadius: 'var(--r-lg)',
-            }}
+            style={{ flexDirection: 'column', alignItems: 'center', textAlign: 'center', padding: '1.75rem 1.25rem', marginBottom: '1rem', borderRadius: 'var(--r-lg)' }}
           >
-            {scanResult.success ? (
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: '50%',
-                  background: 'var(--green-100)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: '0.75rem',
-                  color: 'var(--green-700)',
-                }}
-              >
-                <CheckCircle2 size={32} />
-              </div>
-            ) : (
-              <div
-                style={{
-                  width: 52,
-                  height: 52,
-                  borderRadius: '50%',
-                  background: 'var(--red-100)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  marginBottom: '0.75rem',
-                  color: 'var(--red-700)',
-                }}
-              >
-                <AlertTriangle size={32} />
-              </div>
-            )}
-
-            <div style={{ fontWeight: 800, fontSize: '1.125rem', marginBottom: '0.375rem', color: scanResult.success ? 'var(--green-900)' : 'var(--red-900)' }}>
-              {scanResult.success ? 'Attendance Verified & Recorded!' : 'Verification Failed'}
+            {scanResult.success ? <CheckCircle2 size={40} style={{ marginBottom: '0.75rem' }} /> : <AlertTriangle size={40} style={{ marginBottom: '0.75rem' }} />}
+            <div style={{ fontWeight: 800, fontSize: '1.125rem', marginBottom: '0.375rem' }}>
+              {scanResult.success ? 'Attendance recorded' : 'Not recorded'}
             </div>
-            <p style={{ fontSize: '0.875rem', opacity: 0.95, lineHeight: 1.5, margin: 0 }}>
-              {scanResult.message}
-            </p>
-
-            {scanResult.success && studentMetrics && (
-              <div
-                style={{
-                  marginTop: '1rem',
-                  padding: '0.625rem 1rem',
-                  background: 'rgba(255,255,255,0.7)',
-                  borderRadius: 'var(--r-md)',
-                  border: '1px solid var(--green-200)',
-                  width: '100%',
-                  fontSize: '0.75rem',
-                  color: 'var(--green-900)',
-                  fontWeight: 600,
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                }}
-              >
-                <span>Current Overall Attendance:</span>
-                <strong style={{ fontSize: '0.875rem' }}>{studentMetrics.percentage}%</strong>
+            <p style={{ fontSize: '0.875rem', lineHeight: 1.5, margin: 0 }}>{scanResult.message}</p>
+            {scanResult.success && overall && (
+              <div style={{ marginTop: '1rem', fontSize: '0.8125rem', fontWeight: 600 }}>
+                Overall attendance: <strong>{overall.percentage}%</strong>
               </div>
             )}
-
-            <div style={{ display: 'flex', gap: '0.625rem', marginTop: '1.25rem', justifyContent: 'center', width: '100%' }}>
+            <div style={{ display: 'flex', gap: '0.625rem', marginTop: '1.25rem', width: '100%' }}>
               {scanResult.success ? (
-                <button className="btn btn-primary" style={{ width: '100%' }} onClick={onClose}>
-                  Done &amp; View Dashboard
+                <button className="btn btn-primary" style={{ width: '100%' }} onClick={close}>
+                  Done
                 </button>
               ) : (
-                <button className="btn btn-secondary" style={{ width: '100%' }} onClick={() => setScanResult(null)}>
-                  Try Scanning Again
+                <button
+                  className="btn btn-secondary"
+                  style={{ width: '100%' }}
+                  onClick={() => setScanResult(null)}
+                >
+                  Scan again
                 </button>
               )}
             </div>
           </div>
         ) : (
           <>
-            {/* Viewfinder Window */}
             <div
               style={{
-                height: 220,
+                minHeight: 260,
                 background: '#090d16',
                 borderRadius: 'var(--r-lg)',
-                border: '1px solid var(--gray-700)',
-                display: 'flex',
-                flexDirection: 'column',
-                alignItems: 'center',
-                justifyContent: 'center',
-                marginBottom: '1rem',
+                marginBottom: '0.75rem',
                 overflow: 'hidden',
                 position: 'relative',
+                display: 'grid',
+                placeItems: 'center',
               }}
             >
-              {/* Optional Live Video Feed */}
-              <video
-                ref={videoRef}
-                playsInline
-                muted
-                style={{
-                  position: 'absolute',
-                  inset: 0,
-                  width: '100%',
-                  height: '100%',
-                  objectFit: 'cover',
-                  display: cameraActive ? 'block' : 'none',
-                }}
-              />
+              <div id={READER_ID} style={{ width: '100%' }} />
+              {cameraState !== 'on' && (
+                <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: '1.25rem', textAlign: 'center', color: '#cbd5e1', fontSize: '0.8125rem' }}>
+                  {submitting ? (
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}><Loader2 size={18} /> Checking code…</span>
+                  ) : cameraState === 'starting' ? (
+                    'Starting camera…'
+                  ) : cameraState === 'error' ? (
+                    <div>
+                      <div style={{ marginBottom: '0.75rem' }}>{cameraError}</div>
+                      <button className="btn btn-secondary btn-sm" onClick={() => setCameraState('idle')}>Try camera again</button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
 
-              {/* Viewfinder HUD Target Reticle */}
-              <div
-                style={{
-                  width: 150,
-                  height: 150,
-                  border: '2px solid rgba(59, 130, 246, 0.7)',
-                  borderRadius: 'var(--r-md)',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  position: 'relative',
-                  zIndex: 2,
-                  boxShadow: '0 0 25px rgba(37, 99, 235, 0.25)',
-                }}
-              >
-                {/* 4 Corner Markers */}
-                <span style={{ position: 'absolute', top: -3, left: -3, width: 14, height: 14, borderTop: '3px solid #3b82f6', borderLeft: '3px solid #3b82f6' }} />
-                <span style={{ position: 'absolute', top: -3, right: -3, width: 14, height: 14, borderTop: '3px solid #3b82f6', borderRight: '3px solid #3b82f6' }} />
-                <span style={{ position: 'absolute', bottom: -3, left: -3, width: 14, height: 14, borderBottom: '3px solid #3b82f6', borderLeft: '3px solid #3b82f6' }} />
-                <span style={{ position: 'absolute', bottom: -3, right: -3, width: 14, height: 14, borderBottom: '3px solid #3b82f6', borderRight: '3px solid #3b82f6' }} />
+            <label className="btn btn-secondary btn-sm" style={{ width: '100%', marginBottom: '1rem', cursor: 'pointer' }}>
+              <Upload size={13} /> Upload a photo of the QR code instead
+              <input type="file" accept="image/*" style={{ display: 'none' }} onChange={handleFile} />
+            </label>
 
-                {/* Animated Laser Scan Line */}
-                <div
-                  style={{
-                    position: 'absolute',
-                    left: 2,
-                    right: 2,
-                    height: 2,
-                    background: '#38bdf8',
-                    boxShadow: '0 0 8px #38bdf8',
-                    animation: 'scanLaser 2.2s ease-in-out infinite alternate',
-                  }}
-                />
-
-                {!cameraActive && (
-                  <Camera size={36} color="rgba(255,255,255,0.4)" />
+            {activeSession ? (
+              <div style={{ padding: '0.875rem 1rem', borderRadius: 'var(--r-md)', background: 'var(--blue-50)', border: '1px solid var(--blue-200)', fontSize: '0.8125rem' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontWeight: 700, color: 'var(--blue-700)' }}>
+                  <span className="pulse-indicator" /> Live now: {targetSubject?.name ?? 'Lecture'}
+                </div>
+                <div style={{ color: 'var(--gray-600)', marginTop: 2 }}>
+                  Room {targetClass?.room} · Sem {targetClass?.semester} Div {targetClass?.division}
+                  {activeSession.topic ? ` · ${activeSession.topic}` : ''}
+                </div>
+                {needsLocation && (
+                  <div style={{ color: 'var(--blue-800)', marginTop: 4 }}>
+                    <MapPin size={11} style={{ verticalAlign: 'middle' }} /> Your teacher requires a location check — allow location when asked.
+                  </div>
                 )}
               </div>
-
-              {/* Viewfinder Footer status */}
-              <div
-                style={{
-                  position: 'absolute',
-                  bottom: 8,
-                  left: 12,
-                  right: 12,
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  zIndex: 3,
-                }}
-              >
-                <span
-                  style={{
-                    fontSize: '0.6875rem',
-                    color: '#93c5fd',
-                    background: 'rgba(15, 23, 42, 0.75)',
-                    padding: '2px 8px',
-                    borderRadius: 'var(--r-xs)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  <span className="pulse-indicator" style={{ width: 6, height: 6 }} />
-                  {cameraActive ? 'Live Camera Feed' : 'Optical Viewfinder Ready'}
-                </span>
-
-                <button
-                  type="button"
-                  onClick={cameraActive ? stopCamera : startCamera}
-                  style={{
-                    background: 'rgba(15, 23, 42, 0.75)',
-                    border: '1px solid rgba(255,255,255,0.2)',
-                    color: '#fff',
-                    borderRadius: 'var(--r-xs)',
-                    padding: '3px 8px',
-                    fontSize: '0.6875rem',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: 4,
-                  }}
-                >
-                  {cameraActive ? <VideoOff size={11} /> : <Video size={11} />}
-                  {cameraActive ? 'Turn Off Cam' : 'Use Webcam'}
-                </button>
-              </div>
-
-              <style>{`
-                @keyframes scanLaser {
-                  0% { top: 6%; opacity: 0.3; }
-                  50% { opacity: 1; }
-                  100% { top: 92%; opacity: 0.3; }
-                }
-              `}</style>
-            </div>
-
-            {/* Active Session Card */}
-            {activeSession ? (
-              <div
-                style={{
-                  padding: '1rem',
-                  borderRadius: 'var(--r-md)',
-                  background: 'var(--blue-50)',
-                  border: '1px solid var(--blue-200)',
-                  marginBottom: '1rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.625rem',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                    <span className="pulse-indicator" />
-                    <span style={{ fontSize: '0.75rem', fontWeight: 700, color: 'var(--blue-700)', textTransform: 'uppercase' }}>
-                      Ongoing Lecture Detected
-                    </span>
-                  </div>
-                  <span
-                    style={{
-                      fontSize: '0.6875rem',
-                      color: 'var(--blue-800)',
-                      fontWeight: 600,
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: 4,
-                    }}
-                  >
-                    <Clock size={11} /> Refreshes in {timeLeft}s
-                  </span>
-                </div>
-
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: '0.9375rem', color: 'var(--gray-900)' }}>
-                    {targetSubject?.name || 'Class Lecture'}
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--gray-600)', marginTop: 2 }}>
-                    Room {targetClass?.room} · Division {targetClass?.division} · Semester {targetClass?.semester}
-                  </div>
-                  {activeSession.topic && (
-                    <div style={{ fontSize: '0.6875rem', color: 'var(--blue-800)', marginTop: 4 }}>
-                      Topic: <strong>{activeSession.topic}</strong>
-                    </div>
-                  )}
-                </div>
-
-                <button
-                  type="button"
-                  className="btn btn-primary"
-                  style={{ width: '100%', marginTop: '0.25rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}
-                  onClick={() => handleScan(qrPayload)}
-                >
-                  <Sparkles size={14} />
-                  Scan &amp; Mark My Attendance Now
-                </button>
-              </div>
             ) : (
-              <div
-                style={{
-                  padding: '1rem',
-                  borderRadius: 'var(--r-md)',
-                  background: 'var(--amber-50)',
-                  border: '1px solid var(--amber-200)',
-                  marginBottom: '1rem',
-                  display: 'flex',
-                  flexDirection: 'column',
-                  gap: '0.625rem',
-                }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--amber-800)' }}>
-                  <ShieldAlert size={16} style={{ flexShrink: 0 }} />
-                  <span style={{ fontSize: '0.8125rem', fontWeight: 600 }}>
-                    No lecture attendance session is currently open.
-                  </span>
-                </div>
-                <p style={{ fontSize: '0.75rem', color: 'var(--amber-900)', margin: 0, lineHeight: 1.4 }}>
-                  Faculty opens rolling QR codes during class. You can also start a demo lecture session right now to test the scanner!
-                </p>
-                <button
-                  type="button"
-                  className="btn btn-secondary btn-sm"
-                  style={{ width: '100%', borderColor: 'var(--amber-300)', background: 'var(--white)', color: 'var(--amber-900)' }}
-                  onClick={handleStartDemoSession}
-                >
-                  <Play size={12} /> Launch Instant Demo Lecture Session
-                </button>
+              <div style={{ padding: '0.875rem 1rem', borderRadius: 'var(--r-md)', background: 'var(--amber-50)', border: '1px solid var(--amber-200)', fontSize: '0.8125rem', color: 'var(--amber-900)', display: 'flex', gap: 8 }}>
+                <ShieldAlert size={16} style={{ flexShrink: 0 }} />
+                <span>None of your classes has an open attendance session right now. Your teacher shows the QR code during class.</span>
               </div>
             )}
-
-            {/* Anti-Proxy Security Testing */}
-            <div style={{ borderTop: '1px solid var(--gray-200)', paddingTop: '0.875rem' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.375rem' }}>
-                <span style={{ fontSize: '0.6875rem', fontWeight: 700, color: 'var(--gray-500)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
-                  Institutional Security Engine
-                </span>
-                <span style={{ fontSize: '0.625rem', color: 'var(--green-700)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 3 }}>
-                  <ShieldCheck size={11} /> 30s Replay Protection
-                </span>
-              </div>
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm"
-                style={{ width: '100%', fontSize: '0.75rem', color: 'var(--gray-600)', padding: '0.35rem 0.5rem', border: '1px dashed var(--gray-300)' }}
-                onClick={handleExpiredTest}
-              >
-                Test Expired QR Token Rejection (Anti-Proxy Simulation)
-              </button>
-            </div>
           </>
         )}
       </div>

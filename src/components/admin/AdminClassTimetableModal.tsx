@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import { CollegeClass } from '../../types';
-import { X, Calendar, Clock, BookOpen, User, MapPin, CheckCircle2, AlertCircle } from 'lucide-react';
+import { X, Calendar, CheckCircle2, AlertCircle } from 'lucide-react';
 
 interface AdminClassTimetableModalProps {
   isOpen: boolean;
@@ -109,7 +109,7 @@ export const AdminClassTimetableModal: React.FC<AdminClassTimetableModalProps> =
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -134,7 +134,7 @@ export const AdminClassTimetableModal: React.FC<AdminClassTimetableModalProps> =
     const subjectName = subjectObj ? `${subjectObj.name} (${subjectObj.code})` : 'Class';
 
     if (initialClass) {
-      updateClass(initialClass.id, {
+      await updateClass(initialClass.id, {
         subject_id: subjectId,
         faculty_id: facultyId,
         semester: Number(semester),
@@ -145,7 +145,7 @@ export const AdminClassTimetableModal: React.FC<AdminClassTimetableModalProps> =
       });
       onSuccess?.(`Updated timetable entry for ${subjectName}`);
     } else {
-      addClass({
+      await addClass({
         subject_id: subjectId,
         faculty_id: facultyId,
         semester: Number(semester),

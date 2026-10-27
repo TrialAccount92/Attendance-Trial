@@ -1,9 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import {
-  Calendar, X, Clock, MapPin, BookOpen, AlertCircle,
-  CheckCircle2, Users, Sparkles,
-} from 'lucide-react';
+  Calendar, X, Clock, MapPin, BookOpen, CheckCircle2, Users, } from 'lucide-react';
+import { localDateString } from '../../utils/date';
 
 interface ScheduleExtraClassModalProps {
   isOpen: boolean;
@@ -16,7 +15,7 @@ export const ScheduleExtraClassModal: React.FC<ScheduleExtraClassModalProps> = (
   onClose,
   initialClassId,
 }) => {
-  const { currentFaculty, classes, subjects, students, scheduleExtraClass } = useAttendance();
+  const { currentFaculty, classes, subjects, getClassEnrolledStudents, scheduleExtraClass } = useAttendance();
 
   const myClasses = currentFaculty
     ? classes.filter((c) => c.faculty_id === currentFaculty.id)
@@ -38,7 +37,7 @@ export const ScheduleExtraClassModal: React.FC<ScheduleExtraClassModalProps> = (
     const day = d.getDay(); // 0 is Sunday, 6 is Saturday
     const diff = (6 - day + 7) % 7 || 7; // days until next Saturday
     d.setDate(d.getDate() + diff + weeksAhead * 7);
-    return d.toISOString().split('T')[0];
+    return localDateString(d);
   };
 
   useEffect(() => {
@@ -66,13 +65,11 @@ export const ScheduleExtraClassModal: React.FC<ScheduleExtraClassModalProps> = (
     }
   }, [activeClass]);
 
-  const enrolledStudents = activeClass
-    ? students.filter((s) => s.semester === activeClass.semester && s.division === activeClass.division)
-    : [];
+  const enrolledStudents = activeClass ? getClassEnrolledStudents(activeClass.id) : [];
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg('');
 
@@ -91,16 +88,20 @@ export const ScheduleExtraClassModal: React.FC<ScheduleExtraClassModalProps> = (
 
     if (!currentFaculty) return;
 
-    scheduleExtraClass({
-      class_id: selectedClassId,
-      faculty_id: currentFaculty.id,
-      date,
-      start_time: startTime,
-      end_time: endTime,
-      room: room.trim() || activeClass?.room || 'Classroom',
-      topic: topic.trim(),
-      reason: reason.trim() || 'Compensatory lecture',
-    });
+    try {
+      await scheduleExtraClass({
+        class_id: selectedClassId,
+        date,
+        start_time: startTime,
+        end_time: endTime,
+        room: room.trim() || activeClass?.room || 'Classroom',
+        topic: topic.trim(),
+        reason: reason.trim() || 'Compensatory lecture',
+      });
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Could not schedule the class.');
+      return;
+    }
 
     setSuccessMsg('Extra lecture successfully scheduled! Students have been notified.');
     setTimeout(() => {

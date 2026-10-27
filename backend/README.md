@@ -1,82 +1,60 @@
-# AttendPulse YOLO11 + ByteTrack AI Backend
+# AttendPulse API
 
-Enterprise computer vision microservice for multi-student automated facial attendance using **Ultralytics YOLO11**, **ByteTrack Multi-Object Tracking**, and **Zero-Latency Pipeline Buffer Flushing**.
+FastAPI + SQLite. It stores all data, handles sign-in, signs and verifies attendance QR codes, and enforces who may see and change what. The browser measures faces (face-api.js descriptors and landmarks); the API decides who they are (`app/face.py`) and whether the head is live (`app/liveness.py`). Stored face descriptors never leave the server.
 
----
+## Run
 
-## 🌟 Key Architecture & Capabilities
-
-1. **YOLO11 Face Detection:**
-   - Detects all student faces across varying distances (front row to back row) in a single pass.
-   - Ultra-fast inference with native TensorRT, PyTorch, or ONNX runtimes.
-
-2. **ByteTrack Multi-Object Tracking:**
-   - Assigns persistent `Track ID`s (Track #1, Track #2, etc.) to each detected student.
-   - Overcomes brief occlusions, hand gestures, and head turns using Kalman filter state prediction.
-   - **Performance optimization:** Once a student's face is verified, recognition only runs once, saving 90%+ computational resources.
-
-3. **Zero-Latency Pipeline Flushing:**
-   - Dedicated threaded reader continually drains the camera socket buffer (`maxsize=1`).
-   - Guarantees the vision engine always processes the freshest real-time frame with 0 ms buffer latency.
-
-4. **Classroom Camera Ingestion:**
-   - Local webcams (`source="0"`)
-   - College IP / CCTV ceiling cameras (`rtsp://admin:pass@192.168.1.50:554/stream1`)
-   - High-fidelity simulated multi-student classroom feed (`source="SIMULATED"`)
-
----
-
-## 🚀 Quick Start
-
-### Option A: Using `uv` (Recommended - Ultra Fast)
 ```bash
 cd backend
-uv venv .venv
-source .venv/bin/activate
-uv pip install -r requirements.txt
-uv run uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### Option B: Using Standard Python
-```bash
-cd backend
-chmod +x run_backend.sh
 ./run_backend.sh
 ```
 
-The server will start at:
-- **API Base:** `http://localhost:8000`
-- **Interactive Swagger Docs:** `http://localhost:8000/docs`
-- **Live Video MJPEG Feed:** `http://localhost:8000/api/streams/video_feed`
-- **WebSocket Telemetry:** `ws://localhost:8000/ws/live`
+or manually:
 
----
-
-## 📡 REST & WebSocket API Endpoints
-
-| Method | Endpoint | Description |
-| :--- | :--- | :--- |
-| `GET` | `/api/health` | System status, FPS, frame latency, active track count |
-| `POST` | `/api/sessions/start` | Start attendance session for a class ID and camera source |
-| `POST` | `/api/sessions/stop` | End active session and retrieve marked students list |
-| `GET` | `/api/sessions/active` | Current active lecture session & marked counts |
-| `POST` | `/api/students/enroll` | Enroll student face descriptor into the gallery |
-| `GET` | `/api/students` | List all enrolled student profiles |
-| `GET` | `/api/streams/video_feed` | Multipart MJPEG stream with overlaid ByteTrack boxes |
-| `WebSocket` | `/ws/live` | 30 FPS telemetry stream for the React dashboard |
-
----
-
-## 📹 Connecting Physical RTSP Ceiling Cameras
-
-To connect a ceiling camera in a lecture hall:
-```json
-POST /api/sessions/start
-{
-  "class_id": "cls-1",
-  "camera_source": "rtsp://admin:admin123@192.168.1.120:554/h264Preview_01_main",
-  "confidence_threshold": 0.75,
-  "topic": "CS301 Database Systems"
-}
+```bash
+python3 -m venv .venv && source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
-The backend will immediately connect to the RTSP camera stream, flush internal buffers, and begin marking student attendance.
+
+On first start it creates `data/attendpulse.db` and fills it with demo data (accounts are in the main README).
+
+- API docs: <http://localhost:8000/docs>
+- Health: <http://localhost:8000/api/health>
+- If `../dist` exists (after `npm run build`), the site itself is served at <http://localhost:8000>.
+
+## Configuration (environment variables)
+
+| Variable | Default | |
+| --- | --- | --- |
+| `APP_SECRET` | random, saved to `data/secret.key` | Signs QR codes. Set it explicitly in production. |
+| `DATA_DIR` | `backend/data` | Where the DB and secret live |
+| `DATABASE_PATH` | `$DATA_DIR/attendpulse.db` | |
+| `COOKIE_SECURE` | `0` | Set `1` when served over HTTPS |
+| `SESSION_HOURS` | `12` | Sign-in lifetime |
+| `CORS_ORIGINS` | `http://localhost:5173,http://127.0.0.1:5173` | Only needed if the frontend is on another origin |
+| `QR_INTERVAL` | `30` | Seconds per QR code |
+| `GEOFENCE_METERS` | `150` | Default radius for the optional location check |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USER`, `SMTP_PASSWORD`, `SMTP_FROM` | unset | Enables emailing attendance warnings (STARTTLS) |
+
+## Main endpoints
+
+| | |
+| --- | --- |
+| `POST /api/auth/login` · `POST /api/auth/logout` · `GET /api/auth/me` · `POST /api/auth/change-password` | Sign-in (httpOnly cookie) |
+| `GET /api/state` | Everything the signed-in user may see |
+| `POST /api/sessions` · `POST /api/sessions/{id}/close` · `GET /api/sessions/{id}/qr` | Lecture sessions and the live QR |
+| `POST /api/attendance/qr` | Student check-in with a scanned code (+ location if required) |
+| `POST /api/classes/{id}/identify` · `POST /api/sessions/{id}/face-mark` · `PUT/DELETE /api/students/{id}/face` | Face recognition: identify descriptors, mark after identity + head-turn check, enroll with a both-ways head turn |
+| `PUT /api/records` · `POST /api/roll-call` | Manual marks |
+| `/api/corrections`, `/api/leaves`, `/api/announcements`, `/api/events`, `/api/extra-classes` | Requests and calendar |
+| `/api/students`, `/api/faculty`, `/api/subjects`, `/api/classes`, `PUT /api/settings` | Administration |
+| `POST /api/notices/dispatch` | Attendance warning emails |
+| `POST /api/admin/reset-demo` | Wipe and reload demo data (admin) |
+
+## Tests
+
+```bash
+pip install -r requirements-dev.txt
+python -m pytest -q
+```

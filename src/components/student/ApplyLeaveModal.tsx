@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import { LeaveType } from '../../types';
-import { X, FileText, Calendar, Check, AlertCircle, Upload, ShieldCheck } from 'lucide-react';
+import { X, FileText, Check, AlertCircle, Upload, ShieldCheck } from 'lucide-react';
+import { localDateString } from '../../utils/date';
 
 interface ApplyLeaveModalProps {
   isOpen: boolean;
@@ -23,7 +24,7 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
 }) => {
   const { applyLeave } = useAttendance();
 
-  const todayStr = new Date().toISOString().split('T')[0];
+  const todayStr = localDateString();
   const [leaveType, setLeaveType] = useState<LeaveType>('MEDICAL');
   const [startDate, setStartDate] = useState(todayStr);
   const [endDate, setEndDate] = useState(todayStr);
@@ -33,7 +34,7 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
 
   if (!isOpen) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
 
@@ -50,13 +51,18 @@ export const ApplyLeaveModal: React.FC<ApplyLeaveModalProps> = ({
       return;
     }
 
-    applyLeave({
-      leave_type: leaveType,
-      start_date: startDate,
-      end_date: endDate,
-      reason: reason.trim(),
-      document_name: docName.trim() || undefined,
-    });
+    try {
+      await applyLeave({
+        leave_type: leaveType,
+        start_date: startDate,
+        end_date: endDate,
+        reason: reason.trim(),
+        document_name: docName.trim() || undefined,
+      });
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not submit the application.');
+      return;
+    }
 
     onSuccess?.(`Leave application submitted successfully. Faculty and HOD will review your request.`);
     onClose();

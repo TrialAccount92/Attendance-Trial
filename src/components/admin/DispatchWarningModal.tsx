@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Student } from '../../types';
-import { X, Send, Mail, MessageSquare, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { X, Send, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { useAttendance } from '../../context/AttendanceContext';
 
 interface DefaulterItem {
   student: Student;
@@ -15,7 +16,7 @@ interface DispatchWarningModalProps {
   onClose: () => void;
   defaulters: DefaulterItem[];
   thresholdPct: number;
-  onDispatchSuccess: (count: number, channel: string) => void;
+  onDispatchSuccess: (sent: number, queued: number) => void;
 }
 
 export const DispatchWarningModal: React.FC<DispatchWarningModalProps> = ({
@@ -25,24 +26,37 @@ export const DispatchWarningModal: React.FC<DispatchWarningModalProps> = ({
   thresholdPct,
   onDispatchSuccess,
 }) => {
-  const [channel, setChannel] = useState<'EMAIL' | 'SMS' | 'BOTH'>('BOTH');
-  const [includeParents, setIncludeParents] = useState(true);
+  const { dispatchNotices } = useAttendance();
+  const [subject, setSubject] = useState('Attendance shortfall — exam eligibility warning');
+  const [message, setMessage] = useState('');
   const [isSending, setIsSending] = useState(false);
-  const [isDone, setIsDone] = useState(false);
+  const [result, setResult] = useState<{ sent: number; queued: number; failed: number; email_configured: boolean } | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
 
-  const handleSend = () => {
+  const body =
+    message ||
+    `Dear {name},\n\nYour overall attendance is below the mandatory ${thresholdPct}% required for semester examinations. ` +
+      'Please attend all upcoming lectures and contact your class teacher if you have approved leave that is not yet recorded.\n\n— Attendance Committee';
+
+  const handleSend = async () => {
     setIsSending(true);
-    setTimeout(() => {
+    setError(null);
+    try {
+      const res = await dispatchNotices(defaulters.map((d) => d.student.id), subject, body);
+      setResult(res);
+      onDispatchSuccess(res.sent, res.queued);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not send notices.');
+    } finally {
       setIsSending(false);
-      setIsDone(true);
-      onDispatchSuccess(defaulters.length, channel);
-    }, 900);
+    }
   };
 
   const handleClose = () => {
-    setIsDone(false);
+    setResult(null);
+    setError(null);
     onClose();
   };
 
@@ -87,7 +101,7 @@ export const DispatchWarningModal: React.FC<DispatchWarningModalProps> = ({
 
         {/* Modal Body */}
         <div className="modal-body" style={{ display: 'flex', flexDirection: 'column', gap: '1.125rem' }}>
-          {isDone ? (
+          {result ? (
             <div style={{ textAlign: 'center', padding: '2rem 1rem' }}>
               <div
                 style={{
@@ -106,10 +120,14 @@ export const DispatchWarningModal: React.FC<DispatchWarningModalProps> = ({
                 <CheckCircle2 size={28} />
               </div>
               <h3 style={{ margin: '0 0 0.5rem', fontWeight: 800, fontSize: '1.125rem', color: 'var(--gray-900)' }}>
-                Official Warnings Dispatched Successfully!
+                {result.email_configured ? `${result.sent} email notice(s) sent` : `${result.queued} notice(s) queued`}
               </h3>
               <p style={{ color: 'var(--gray-600)', fontSize: '0.875rem', maxWidth: 440, margin: '0 auto 1.5rem', lineHeight: 1.5 }}>
-                Notices have been delivered to <strong>{defaulters.length} students</strong> {includeParents && 'and their registered parent guardians'} via <strong>{channel === 'BOTH' ? 'Email & SMS' : channel}</strong>.
+                {result.email_configured
+                  ? result.failed > 0
+                    ? `${result.failed} could not be delivered — check the server's SMTP settings.`
+                    : 'Each student received the notice at their registered email address.'
+                  : 'No email server is configured, so the notices were saved to the outbox only. Set SMTP_HOST (see backend/README.md) to send them.'}
               </p>
               <button className="btn btn-primary" onClick={handleClose}>
                 Done &amp; Return to Dashboard
@@ -181,72 +199,15 @@ export const DispatchWarningModal: React.FC<DispatchWarningModalProps> = ({
                 </div>
               </div>
 
-              {/* Dispatch Options */}
-              <div className="grid-2" style={{ gap: '0.875rem' }}>
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label">Notification Channels</label>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    {[
-                      { id: 'BOTH', label: 'Email & SMS' },
-                      { id: 'EMAIL', label: 'Email Only' },
-                      { id: 'SMS', label: 'SMS Only' },
-                    ].map((c) => (
-                      <button
-                        key={c.id}
-                        type="button"
-                        className={`btn btn-xs ${channel === c.id ? 'btn-primary' : 'btn-secondary'}`}
-                        onClick={() => setChannel(c.id as any)}
-                        style={{ flex: 1, padding: '0.35rem 0.25rem', fontSize: '0.6875rem' }}
-                      >
-                        {c.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                <div className="form-group" style={{ margin: 0 }}>
-                  <label className="form-label">Guardian Notification</label>
-                  <label
-                    style={{
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '0.5rem',
-                      fontSize: '0.8125rem',
-                      color: 'var(--gray-800)',
-                      cursor: 'pointer',
-                      padding: '0.35rem 0',
-                    }}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={includeParents}
-                      onChange={(e) => setIncludeParents(e.target.checked)}
-                      style={{ accentColor: 'var(--blue-600)', width: 16, height: 16 }}
-                    />
-                    <span>CC Registered Parent / Guardian Contacts</span>
-                  </label>
-                </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Email subject</label>
+                <input className="form-input" value={subject} onChange={(e) => setSubject(e.target.value)} maxLength={200} />
               </div>
-
-              {/* Notice Message Preview */}
-              <div
-                style={{
-                  background: 'var(--gray-50)',
-                  border: '1px solid var(--gray-200)',
-                  borderRadius: 'var(--r-sm)',
-                  padding: '0.75rem',
-                  fontSize: '0.75rem',
-                  color: 'var(--gray-600)',
-                  lineHeight: 1.45,
-                }}
-              >
-                <div style={{ fontWeight: 700, color: 'var(--gray-800)', marginBottom: 2 }}>
-                  Message Subject: URGENT: Attendance Shortfall &amp; Exam Detention Warning Notice
-                </div>
-                <div>
-                  "Dear Student &amp; Guardian, This is an official notice from the Attendance Committee. Your current attendance is below the mandatory {thresholdPct}% threshold. Failure to attend upcoming lectures may result in exam detention as per University Ordinance 0.6086."
-                </div>
+              <div className="form-group" style={{ margin: 0 }}>
+                <label className="form-label">Message ({'{name}'} is replaced with each student's name)</label>
+                <textarea className="form-textarea" rows={5} value={body} onChange={(e) => setMessage(e.target.value)} />
               </div>
+              {error && <div className="alert alert-danger" style={{ fontSize: '0.8125rem' }}>{error}</div>}
 
               {/* Action Buttons */}
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.625rem', marginTop: '0.5rem' }}>
@@ -260,7 +221,7 @@ export const DispatchWarningModal: React.FC<DispatchWarningModalProps> = ({
                   disabled={isSending || defaulters.length === 0}
                 >
                   <Send size={14} />
-                  {isSending ? 'Sending Notifications…' : `Dispatch Notices to ${defaulters.length} Defaulters`}
+                  {isSending ? 'Sending…' : `Email ${defaulters.length} student${defaulters.length === 1 ? '' : 's'}`}
                 </button>
               </div>
             </>

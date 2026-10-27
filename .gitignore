@@ -30,3 +30,7 @@ __pycache__/
 *.py[cod]
 *$py.class
 backend/.venv/
+
+# AttendPulse database, secret key and other runtime data
+backend/data/
+.pytest_cache/

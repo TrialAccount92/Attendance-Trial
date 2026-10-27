@@ -4,8 +4,9 @@ import { CollegeClass, Student } from '../../types';
 import {
   FileSpreadsheet, GraduationCap, Users, Calendar, Settings,
   AlertTriangle, Download, Megaphone, Upload, Trash2, Search,
-  Plus, Send, CheckCircle2, Edit2, BookOpen, UserCheck, Sparkles, Filter, X,
-  ShieldAlert
+  Plus, Send, CheckCircle2, Edit2, BookOpen, Filter, X,
+  ShieldAlert,
+  KeyRound,
 } from 'lucide-react';
 import { exportToCSV } from '../../utils/exportUtils';
 import { ImportStudentsModal } from './ImportStudentsModal';
@@ -22,7 +23,7 @@ import { AcademicCalendarModal } from '../common/AcademicCalendarModal';
 export const AdminDashboard: React.FC = () => {
   const {
     students, facultyList, subjects, classes, records, announcements,
-    addAnnouncement, minAttendanceThreshold, setMinAttendanceThreshold,
+    addAnnouncement, minAttendanceThreshold, setMinAttendanceThreshold, resetStudentPassword,
     removeStudent, removeFaculty, removeClass, departments,
   } = useAttendance();
 
@@ -66,7 +67,8 @@ export const AdminDashboard: React.FC = () => {
   const studentStats = students.map((stu) => {
     const rs      = records.filter((r) => r.student_id === stu.id);
     const total   = rs.length;
-    const present = rs.filter((r) => r.status === 'PRESENT' || r.status === 'LATE').length;
+    // Approved leave (EXCUSED) counts as attendance, same as the student's own dashboard.
+    const present = rs.filter((r) => r.status === 'PRESENT' || r.status === 'LATE' || r.status === 'EXCUSED').length;
     const pct     = total > 0 ? Math.round((present / total) * 1000) / 10 : 100;
     return { student: stu, total, present, absent: Math.max(0, total - present), pct, isLow: pct < minAttendanceThreshold * 100 };
   });
@@ -88,8 +90,8 @@ export const AdminDashboard: React.FC = () => {
 
   const defaultersList = studentStats.filter((s) => s.isLow);
 
-  const totalPresent = records.filter((r) => r.status === 'PRESENT' || r.status === 'LATE').length;
-  const collegeAvg   = records.length > 0 ? Math.round((totalPresent / records.length) * 1000) / 10 : 85;
+  const totalPresent = records.filter((r) => r.status === 'PRESENT' || r.status === 'LATE' || r.status === 'EXCUSED').length;
+  const collegeAvg   = records.length > 0 ? Math.round((totalPresent / records.length) * 1000) / 10 : 0;
   const defaulters   = studentStats.filter((s) => s.isLow).length;
 
   const handleExport = () => {
@@ -113,13 +115,14 @@ export const AdminDashboard: React.FC = () => {
     exportToCSV('College_Attendance_Report', headers, rows);
   };
 
-  const handlePostAnnouncement = (e: React.FormEvent) => {
+  const handlePostAnnouncement = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!announcementTitle.trim() || !announcementContent.trim()) return;
-    addAnnouncement(announcementTitle.trim(), announcementContent.trim(), announcementCategory);
+    await addAnnouncement(announcementTitle.trim(), announcementContent.trim(), announcementCategory);
     setAnnouncementTitle('');
     setAnnouncementContent('');
-    alert('Announcement published.');
+    setAdminToastMsg('Announcement published.');
+    setTimeout(() => setAdminToastMsg(null), 4000);
   };
 
   return (
@@ -531,11 +534,23 @@ export const AdminDashboard: React.FC = () => {
                           </button>
                           <button
                             className="btn btn-ghost btn-xs"
+                            title="Issue a new temporary password"
+                            style={{ marginRight: 6 }}
+                            onClick={async () => {
+                              if (!window.confirm(`Reset ${stu.name}'s password? Their current password stops working.`)) return;
+                              const pw = await resetStudentPassword(stu.id);
+                              window.prompt(`Temporary password for ${stu.name} (login ID ${stu.enrollment_number}). Copy it now:`, pw);
+                            }}
+                          >
+                            <KeyRound size={13} />
+                          </button>
+                          <button
+                            className="btn btn-ghost btn-xs"
                             title="Remove Student"
                             style={{ color: 'var(--red-600)' }}
-                            onClick={() => {
-                              if (window.confirm(`Remove ${stu.name} (Roll ${stu.roll_number}) from the database?`)) {
-                                removeStudent(stu.id);
+                            onClick={async () => {
+                              if (window.confirm(`Remove ${stu.name} (Roll ${stu.roll_number})? This also deletes their attendance history and face profile.`)) {
+                                await removeStudent(stu.id);
                                 setAdminToastMsg(`Student ${stu.name} removed from registry.`);
                                 setTimeout(() => setAdminToastMsg(null), 4000);
                               }
@@ -956,13 +971,9 @@ export const AdminDashboard: React.FC = () => {
         onClose={() => setIsDispatchModalOpen(false)}
         defaulters={defaultersList}
         thresholdPct={Math.round(minAttendanceThreshold * 100)}
-        onDispatchSuccess={(count, channel) => {
-          const msg = `Official warnings successfully dispatched to ${count} students via ${channel === 'BOTH' ? 'Email & SMS' : channel}.`;
-          setDispatchSuccessMsg(msg);
-          addAnnouncement(
-            'Defaulter Warning Notices Dispatched',
-            `Official attendance warnings have been dispatched to ${count} students with attendance below ${minAttendanceThreshold * 100}%. Guardians have been notified.`,
-            'ALERT'
+        onDispatchSuccess={(sent, queued) => {
+          setDispatchSuccessMsg(
+            sent > 0 ? `Attendance warnings emailed to ${sent} students.` : `${queued} attendance warnings saved to the outbox (email not configured).`
           );
         }}
       />

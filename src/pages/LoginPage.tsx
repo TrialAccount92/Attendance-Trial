@@ -1,135 +1,64 @@
 import React, { useState, useEffect } from 'react';
 import {
   QrCode, GraduationCap, UserCheck, ShieldCheck, Lock, Mail,
-  ArrowRight, CheckCircle2, AlertCircle, Eye, EyeOff, Sparkles,
-  Server, KeyRound, User, Check
+  ArrowRight, CheckCircle2, AlertCircle, Eye, EyeOff,
+  Server, KeyRound, User
 } from 'lucide-react';
 import { useAttendance } from '../context/AttendanceContext';
+import { checkHealth } from '../api/client';
 import { AppRoute } from '../utils/router';
 import { UserRole } from '../types';
+
+// Demo account shortcuts; set VITE_HIDE_DEMO_LOGINS=true for a real deployment.
+const SHOW_DEMO_LOGINS = import.meta.env.VITE_HIDE_DEMO_LOGINS !== 'true';
 
 interface LoginPageProps {
   onNavigate: (route: AppRoute) => void;
 }
 
 export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
-  const { login, students, facultyList, users } = useAttendance();
+  const { login } = useAttendance();
   const [selectedRole, setSelectedRole] = useState<UserRole>('STUDENT');
-  const [identifier, setIdentifier] = useState('01');
-  const [password, setPassword] = useState('password123');
+  const [identifier, setIdentifier] = useState('');
+  const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [errorMsg, setErrorMsg] = useState('');
   const [isLoading, setIsLoading] = useState(false);
-  const [backendHealth, setBackendHealth] = useState<{ status: string; fps: number; latency: number } | null>(null);
+  const [apiOnline, setApiOnline] = useState<boolean | null>(null);
 
-  // Check YOLO11 backend health
   useEffect(() => {
-    fetch('http://localhost:8000/api/health')
-      .then((r) => r.json())
-      .then((data) => {
-        setBackendHealth({
-          status: 'ONLINE',
-          fps: data.fps || 30.0,
-          latency: data.frame_latency_ms || 2.1,
-        });
-      })
-      .catch(() => {
-        setBackendHealth({ status: 'OFFLINE', fps: 0, latency: 0 });
-      });
+    checkHealth().then(setApiOnline);
   }, []);
 
-  // Update identifier placeholder and default demo value when role changes
   const handleRoleTabChange = (role: UserRole) => {
     setSelectedRole(role);
     setErrorMsg('');
-    if (role === 'STUDENT') {
-      setIdentifier('01');
-      setPassword('password123');
-    } else if (role === 'FACULTY') {
-      setIdentifier('EMP-101');
-      setPassword('password123');
-    } else {
-      setIdentifier('dean.academics@college.edu');
-      setPassword('admin2026');
+    setIdentifier('');
+    setPassword('');
+  };
+
+  const signIn = async (role: UserRole, id: string, pw: string) => {
+    setErrorMsg('');
+    setIsLoading(true);
+    try {
+      await login(id.trim(), pw, role);
+      onNavigate(role);
+    } catch (err) {
+      setErrorMsg(err instanceof Error ? err.message : 'Sign-in failed.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleLoginSubmit = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
-    setErrorMsg('');
-    setIsLoading(true);
-
-    setTimeout(() => {
-      const cleanId = identifier.trim().toLowerCase();
-
-      if (selectedRole === 'STUDENT') {
-        // Find matching student by roll number or email or user_id
-        const matched = students.find(
-          (s) =>
-            s.roll_number.toLowerCase() === cleanId ||
-            s.roll_number.toLowerCase() === cleanId.padStart(2, '0') ||
-            s.email.toLowerCase() === cleanId ||
-            s.id.toLowerCase() === cleanId ||
-            s.user_id.toLowerCase() === cleanId
-        );
-
-        if (matched) {
-          login('STUDENT', matched.user_id);
-          setIsLoading(false);
-          onNavigate('STUDENT');
-        } else {
-          // Fallback to first student if entered generic demo
-          const fallback = students[0];
-          if (fallback) {
-            login('STUDENT', fallback.user_id);
-            setIsLoading(false);
-            onNavigate('STUDENT');
-          } else {
-            setErrorMsg('Student credentials not found. Please verify roll number.');
-            setIsLoading(false);
-          }
-        }
-      } else if (selectedRole === 'FACULTY') {
-        const matched = facultyList.find(
-          (f) =>
-            f.employee_id.toLowerCase() === cleanId ||
-            f.email.toLowerCase() === cleanId ||
-            f.id.toLowerCase() === cleanId ||
-            f.user_id.toLowerCase() === cleanId
-        );
-
-        if (matched) {
-          login('FACULTY', matched.user_id);
-          setIsLoading(false);
-          onNavigate('FACULTY');
-        } else {
-          const fallback = facultyList[0];
-          if (fallback) {
-            login('FACULTY', fallback.user_id);
-            setIsLoading(false);
-            onNavigate('FACULTY');
-          } else {
-            setErrorMsg('Faculty credentials not recognized. Please check Employee ID.');
-            setIsLoading(false);
-          }
-        }
-      } else {
-        // ADMIN
-        const adminUser = users.find((u) => u.role === 'ADMIN');
-        login('ADMIN', adminUser ? adminUser.id : 'usr-admin');
-        setIsLoading(false);
-        onNavigate('ADMIN');
-      }
-    }, 350);
+    void signIn(selectedRole, identifier, password);
   };
 
-  const handleQuickDemoLogin = (role: UserRole, userId: string) => {
-    setIsLoading(true);
-    setTimeout(() => {
-      login(role, userId);
-      setIsLoading(false);
-      onNavigate(role);
-    }, 200);
+  const handleQuickDemoLogin = (role: UserRole, id: string, pw: string) => {
+    setIdentifier(id);
+    setPassword(pw);
+    void signIn(role, id, pw);
   };
 
   return (
@@ -244,11 +173,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
               gap: 6,
               padding: '3px 10px',
               borderRadius: '9999px',
-              background: backendHealth?.status === 'ONLINE' ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
-              border: `1px solid ${backendHealth?.status === 'ONLINE' ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
+              background: apiOnline ? 'rgba(16, 185, 129, 0.15)' : 'rgba(245, 158, 11, 0.15)',
+              border: `1px solid ${apiOnline ? 'rgba(16, 185, 129, 0.3)' : 'rgba(245, 158, 11, 0.3)'}`,
               fontSize: '0.75rem',
               fontWeight: 600,
-              color: backendHealth?.status === 'ONLINE' ? '#34d399' : '#fbbf24',
+              color: apiOnline ? '#34d399' : '#fbbf24',
             }}
           >
             <span
@@ -256,13 +185,13 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
                 width: 6,
                 height: 6,
                 borderRadius: '50%',
-                background: backendHealth?.status === 'ONLINE' ? '#34d399' : '#fbbf24',
-                boxShadow: backendHealth?.status === 'ONLINE' ? '0 0 6px #34d399' : 'none',
+                background: apiOnline ? '#34d399' : '#fbbf24',
+                boxShadow: apiOnline ? '0 0 6px #34d399' : 'none',
               }}
             />
             <Server size={12} />
             <span>
-              YOLO11 Microservice: {backendHealth?.status === 'ONLINE' ? `Live (${backendHealth.fps} FPS · ${backendHealth.latency}ms)` : 'Standby (Port 8000)'}
+              API server: {apiOnline === null ? 'checking…' : apiOnline ? 'online' : 'offline — start the backend (see README)'}
             </span>
           </div>
         </div>
@@ -366,7 +295,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
               }}
             >
               {selectedRole === 'STUDENT'
-                ? 'Roll Number or Student Email'
+                ? 'Enrollment Number or Student Email'
                 : selectedRole === 'FACULTY'
                 ? 'Faculty ID or College Email'
                 : 'Administrator Email'}
@@ -387,11 +316,12 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
               </div>
               <input
                 type="text"
+                autoComplete="username"
                 value={identifier}
                 onChange={(e) => setIdentifier(e.target.value)}
                 placeholder={
                   selectedRole === 'STUDENT'
-                    ? 'e.g. 01 or aarav.p@student.college.edu'
+                    ? 'e.g. EN202401 or aarav.p@student.college.edu'
                     : selectedRole === 'FACULTY'
                     ? 'e.g. EMP-101 or sharma.cs@college.edu'
                     : 'e.g. dean.academics@college.edu'
@@ -427,8 +357,11 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
               >
                 {selectedRole === 'ADMIN' ? 'Security Passkey' : 'Password'}
               </label>
-              <span style={{ fontSize: '0.75rem', color: '#60a5fa', cursor: 'pointer' }}>
-                Forgot credentials?
+              <span
+                style={{ fontSize: '0.75rem', color: '#60a5fa', cursor: 'help' }}
+                title="Ask the administration office to reset your password. You will get a temporary one."
+              >
+                Forgot password?
               </span>
             </div>
             <div style={{ position: 'relative' }}>
@@ -447,6 +380,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
               </div>
               <input
                 type={showPassword ? 'text' : 'password'}
+                autoComplete="current-password"
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
                 placeholder="••••••••••••"
@@ -523,7 +457,7 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
         </form>
 
         {/* Divider */}
-        <div
+        {SHOW_DEMO_LOGINS && <div
           style={{
             display: 'flex',
             alignItems: 'center',
@@ -536,23 +470,23 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
           }}
         >
           <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
-          <span style={{ padding: '0 0.75rem' }}>Instant 1-Click Demo Login</span>
+          <span style={{ padding: '0 0.75rem' }}>Demo accounts (sample data)</span>
           <div style={{ flex: 1, height: 1, background: 'rgba(255,255,255,0.1)' }} />
-        </div>
+        </div>}
 
         {/* Quick Demo Login Cards */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-          {selectedRole === 'STUDENT' && (
+          {SHOW_DEMO_LOGINS && selectedRole === 'STUDENT' && (
             <>
               {[
-                { name: 'Aarav Patel', roll: 'Roll 01', sem: 'Sem 3A · 88% Attendance', id: 'usr-stu-1' },
-                { name: 'Priya Sharma', roll: 'Roll 02', sem: 'Sem 3A · 78% Attendance', id: 'usr-stu-2' },
-                { name: 'Rohan Kulkarni', roll: 'Roll 03', sem: 'Sem 3A · 65% (Warning)', id: 'usr-stu-3' },
+                { name: 'Aarav Patel', roll: 'EN202401', sem: 'Sem 3 · Div A', id: 'EN202401' },
+                { name: 'Priya Sharma', roll: 'EN202402', sem: 'Sem 3 · Div A', id: 'EN202402' },
+                { name: 'Rohan Kulkarni', roll: 'EN202403', sem: 'Sem 3 · Div A · below 75%', id: 'EN202403' },
               ].map((s) => (
                 <button
                   key={s.id}
                   type="button"
-                  onClick={() => handleQuickDemoLogin('STUDENT', s.id)}
+                  onClick={() => handleQuickDemoLogin('STUDENT', s.id, 'password123')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -604,17 +538,17 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
             </>
           )}
 
-          {selectedRole === 'FACULTY' && (
+          {SHOW_DEMO_LOGINS && selectedRole === 'FACULTY' && (
             <>
               {[
-                { name: 'Prof. Rajesh Sharma', role: 'Associate Professor (CS)', id: 'usr-fac-1', dept: 'DBMS & TOC' },
-                { name: 'Dr. Anita Rao', role: 'Professor & HOD (CS)', id: 'usr-fac-2', dept: 'Operating Systems' },
-                { name: 'Prof. Vikram Patel', role: 'Assistant Professor', id: 'usr-fac-3', dept: 'Mathematics III' },
+                { name: 'Prof. Rajesh Sharma', role: 'EMP-101', id: 'EMP-101', dept: 'DBMS & TOC' },
+                { name: 'Dr. Anita Rao', role: 'EMP-102', id: 'EMP-102', dept: 'Operating Systems' },
+                { name: 'Prof. Vikram Patel', role: 'EMP-103', id: 'EMP-103', dept: 'Mathematics III' },
               ].map((f) => (
                 <button
                   key={f.id}
                   type="button"
-                  onClick={() => handleQuickDemoLogin('FACULTY', f.id)}
+                  onClick={() => handleQuickDemoLogin('FACULTY', f.id, 'password123')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -666,10 +600,10 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
             </>
           )}
 
-          {selectedRole === 'ADMIN' && (
+          {SHOW_DEMO_LOGINS && selectedRole === 'ADMIN' && (
             <button
               type="button"
-              onClick={() => handleQuickDemoLogin('ADMIN', 'usr-admin')}
+              onClick={() => handleQuickDemoLogin('ADMIN', 'dean.academics@college.edu', 'admin2026')}
               style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -738,15 +672,15 @@ export const LoginPage: React.FC<LoginPageProps> = ({ onNavigate }) => {
         }}
       >
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <CheckCircle2 size={13} color="#10b981" /> Biometric Face Verification
+          <CheckCircle2 size={13} color="#10b981" /> Face recognition check-in
         </span>
         <span>•</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <CheckCircle2 size={13} color="#10b981" /> Dynamic TOTP Anti-Spoofing
+          <CheckCircle2 size={13} color="#10b981" /> Server-signed rotating QR codes
         </span>
         <span>•</span>
         <span style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
-          <CheckCircle2 size={13} color="#10b981" /> Localhost Air-Gapped Node
+          <CheckCircle2 size={13} color="#10b981" /> Role-based access
         </span>
       </div>
     </div>

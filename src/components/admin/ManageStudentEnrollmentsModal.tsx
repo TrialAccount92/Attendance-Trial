@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
 import { Student } from '../../types';
-import { X, UserCheck, CheckSquare, Square, Sparkles, Check, AlertCircle } from 'lucide-react';
+import { X, UserCheck, CheckSquare, Square, Sparkles, Check } from 'lucide-react';
 
 interface ManageStudentEnrollmentsModalProps {
   isOpen: boolean;
@@ -47,8 +47,8 @@ export const ManageStudentEnrollmentsModal: React.FC<ManageStudentEnrollmentsMod
     setSelectedClassIds([]);
   };
 
-  const handleSave = () => {
-    updateStudentEnrollments(student.id, selectedClassIds);
+  const handleSave = async () => {
+    await updateStudentEnrollments(student.id, selectedClassIds);
     onSuccess?.(`Updated class allotments for ${student.name} (${selectedClassIds.length} classes).`);
     onClose();
   };

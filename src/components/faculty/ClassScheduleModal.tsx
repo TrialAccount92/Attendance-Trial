@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { useAttendance } from '../../context/AttendanceContext';
-import { CollegeClass, Subject } from '../../types';
+import { CollegeClass } from '../../types';
 import { X, Calendar, Clock, MapPin, BookOpen, Layers, Check } from 'lucide-react';
 
 interface ClassScheduleModalProps {
@@ -57,12 +57,12 @@ export const ClassScheduleModal: React.FC<ClassScheduleModalProps> = ({
 
   if (!isOpen || !currentFaculty) return null;
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!subjectId || !room.trim() || !scheduleTime.trim()) return;
 
     if (isEditMode && initialClass) {
-      updateClass(initialClass.id, {
+      await updateClass(initialClass.id, {
         subject_id: subjectId,
         semester,
         division,
@@ -71,7 +71,7 @@ export const ClassScheduleModal: React.FC<ClassScheduleModalProps> = ({
         schedule_time: scheduleTime.trim(),
       });
     } else {
-      addClass({
+      await addClass({
         subject_id: subjectId,
         faculty_id: currentFaculty.id,
         semester,
